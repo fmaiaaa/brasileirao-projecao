@@ -184,28 +184,8 @@ with st.expander("Dados carregados"):
 
 titulo_secao("Configuração da projeção")
 
-c_proj1, c_proj2 = st.columns(2)
-with c_proj1:
-    r_ini_proj = st.number_input(
-        "Rodada início (projeção)",
-        min_value=1,
-        max_value=38,
-        value=1,
-        step=1,
-        key="proj_r_ini",
-    )
-with c_proj2:
-    r_fim_proj = st.number_input(
-        "Rodada fim (projeção)",
-        min_value=1,
-        max_value=38,
-        value=int(min(_ult_r, 38)),
-        step=1,
-        key="proj_r_fim",
-    )
-if r_fim_proj < r_ini_proj:
-    st.warning("Rodada fim (projeção) menor que início — usando fim = início.")
-    r_fim_proj = r_ini_proj
+r_ini_proj = 1
+r_fim_proj = int(min(_ult_r, 38))
 
 _MODO_SIMPLES = (
     "Regressão linear + simples: "
@@ -243,7 +223,7 @@ else:
     variante = "interacao"
 
 jogos_proj, df_log = aplicar_projecoes(
-    _jogos_base, modo, int(r_ini_proj), int(r_fim_proj), tipo, variante_reg=variante
+    _jogos_base, modo, r_ini_proj, r_fim_proj, tipo, variante_reg=variante
 )
 
 titulo_secao("Classificação")
