@@ -16,6 +16,7 @@ ModoProjecao = Literal[
     "regressao_momento_aceleracao",
     "regressao_momento_historico",
     "regressao_completa",
+    "regressao_completa_limites",
 ]
 TipoRegressao = Literal["simples", "mandante_visitante"]
 VarianteRegressao = Literal[
@@ -27,18 +28,21 @@ VarianteRegressaoAcumulada = Literal[
     "momento_aceleracao",
     "momento_historico",
     "completa",
+    "completa_limites",
 ]
 
 NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
     "momento_aceleracao": "Regressão de Momento e Aceleração (efeitos fixos)",
     "momento_historico": "Regressão de Momento e Histórico (efeitos fixos)",
     "completa": "Regressão Completa (efeitos fixos)",
+    "completa_limites": "Regressão Completa com Limites (efeitos fixos)",
 }
 
 MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
     "regressao_momento_aceleracao": "momento_aceleracao",
     "regressao_momento_historico": "momento_historico",
     "regressao_completa": "completa",
+    "regressao_completa_limites": "completa_limites",
 }
 
 
@@ -47,6 +51,11 @@ def modo_e_regressao_acumulada(modo: ModoProjecao) -> bool:
 
 FORMA_RECENTE_JOGOS = 5
 RODADA_FIM_PRIMEIRO_TURNO = 19
+RODADA_CENTRO = 19  # centro do campeonato para Rodada Centrada
+DELTA_PTS_MAX_POR_RODADA = 3.0
+PESO_FORMA_RECENTE_H1 = 0.80  # próxima rodada
+PESO_FORMA_RECENTE_H5 = 0.50  # daqui a 5 rodadas
+PESO_FORMA_RECENTE_PISO = 0.25
 
 _DIR_APP = Path(__file__).resolve().parent
 ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
@@ -667,6 +676,17 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
             "Proporção Casa",
             "Força dos Adversários Passados",
         ]
+    if variante == "completa_limites":
+        return [
+            "Intercepto",
+            "Rodada",
+            "Rodada Centrada ao Quadrado",
+            "Interação Rodada × Time",
+            "Interação Rodada Centrada ao Quadrado × Time",
+            "Forma Recente",
+            "Força dos Adversários Passados",
+            "Proporção Casa",
+        ]
     return [
         "Intercepto",
         "Rodada",
@@ -689,6 +709,9 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_forma": True,
             "usa_prop_casa": False,
             "usa_forca": False,
+            "usa_rodada_centrada": False,
+            "limita_delta_rodada": False,
+            "forma_decaindo": False,
         }
     if variante == "momento_historico":
         return {
@@ -699,6 +722,22 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_forma": False,
             "usa_prop_casa": True,
             "usa_forca": True,
+            "usa_rodada_centrada": False,
+            "limita_delta_rodada": False,
+            "forma_decaindo": False,
+        }
+    if variante == "completa_limites":
+        return {
+            "usa_rodada": True,
+            "usa_rodada2": True,
+            "usa_interacao_rodada": True,
+            "usa_interacao_rodada2": True,
+            "usa_forma": True,
+            "usa_prop_casa": True,
+            "usa_forca": True,
+            "usa_rodada_centrada": True,
+            "limita_delta_rodada": True,
+            "forma_decaindo": True,
         }
     return {
         "usa_rodada": True,
@@ -708,7 +747,23 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
         "usa_forma": True,
         "usa_prop_casa": True,
         "usa_forca": True,
+        "usa_rodada_centrada": False,
+        "limita_delta_rodada": False,
+        "forma_decaindo": False,
     }
+
+
+def peso_forma_recente_horizonte(horizonte: int) -> float:
+    """
+    Peso da forma recente na mistura com a forma geral.
+    Horizonte 1 (próxima rodada) → 80%; horizonte 5 → 50%; piso 25%.
+    """
+    h = max(1, int(horizonte))
+    # Interpolação linear entre h=1 e h=5
+    passo = (PESO_FORMA_RECENTE_H1 - PESO_FORMA_RECENTE_H5) / 4.0
+    w = PESO_FORMA_RECENTE_H1 - passo * (h - 1)
+    return float(np.clip(w, PESO_FORMA_RECENTE_PISO, PESO_FORMA_RECENTE_H1))
+
 
 
 def _contagem_casa_fora_ate(
@@ -1115,7 +1170,15 @@ def ajustar_painel_efeitos_fixos(
 
     time_ref = times[0]
     non_ref = times[1:]
-    r2_arr = r ** 2
+    usa_centrada = flags.get("usa_rodada_centrada", False)
+    r_c = r - float(RODADA_CENTRO)
+    r2_arr = (r_c ** 2) if usa_centrada else (r ** 2)
+    nome_r2 = "Rodada Centrada ao Quadrado" if usa_centrada else "Rodada ao Quadrado"
+    nome_int_r2_base = (
+        "Interação Rodada Centrada ao Quadrado"
+        if usa_centrada
+        else "Interação Rodada ao Quadrado"
+    )
     usa_int_r = flags.get("usa_interacao_rodada", True)
     usa_int_r2 = flags.get("usa_interacao_rodada2", True)
 
@@ -1131,7 +1194,7 @@ def ajustar_painel_efeitos_fixos(
         nomes.append("Rodada")
     if flags["usa_rodada2"]:
         cols.append(r2_arr)
-        nomes.append("Rodada ao Quadrado")
+        nomes.append(nome_r2)
 
     if usa_int_r:
         for t in non_ref:
@@ -1142,7 +1205,7 @@ def ajustar_painel_efeitos_fixos(
         for t in non_ref:
             d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
             cols.append(r2_arr * d)
-            nomes.append(f"Interação Rodada ao Quadrado × [{t}]")
+            nomes.append(f"{nome_int_r2_base} × [{t}]")
 
     if flags["usa_forma"]:
         cols.append(forma)
@@ -1169,7 +1232,7 @@ def ajustar_painel_efeitos_fixos(
             nomes.append("Rodada")
         if flags["usa_rodada2"]:
             cols.append(r2_arr)
-            nomes.append("Rodada ao Quadrado")
+            nomes.append(nome_r2)
         if flags["usa_forma"]:
             cols.append(forma)
             nomes.append("Forma Recente")
@@ -1296,7 +1359,11 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
         if flags["usa_rodada2"]:
             termos.append(
                 {
-                    "Variável": "Rodada ao Quadrado",
+                    "Variável": (
+                        "Rodada Centrada ao Quadrado"
+                        if flags.get("usa_rodada_centrada")
+                        else "Rodada ao Quadrado"
+                    ),
                     "Beta": round(b2, 4),
                     "p-valor": comum.get("p_rodada2"),
                 }
@@ -1312,7 +1379,11 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
         if flags.get("usa_interacao_rodada2", True):
             termos.append(
                 {
-                    "Variável": "Interação Rodada ao Quadrado × Time",
+                    "Variável": (
+                        "Interação Rodada Centrada ao Quadrado × Time"
+                        if flags.get("usa_rodada_centrada")
+                        else "Interação Rodada ao Quadrado × Time"
+                    ),
                     "Beta": round(g2, 4),
                     "p-valor": fe.get("p_gamma_rodada2"),
                 }
@@ -1360,6 +1431,9 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
             "usa_forma": flags["usa_forma"],
             "usa_forca": flags["usa_forca"],
             "usa_prop_casa": flags["usa_prop_casa"],
+            "usa_rodada_centrada": bool(flags.get("usa_rodada_centrada")),
+            "limita_delta_rodada": bool(flags.get("limita_delta_rodada")),
+            "forma_decaindo": bool(flags.get("forma_decaindo")),
             "variante_acum": variante,
             "termos": termos,
             "n_obs": painel.get("n_obs", 0),
@@ -1378,11 +1452,15 @@ def _prever_acumulado(
     forma_recente: float = 1.0,
 ) -> float:
     r = float(rodada)
+    if b.get("usa_rodada_centrada"):
+        r_quad = (r - float(RODADA_CENTRO)) ** 2
+    else:
+        r_quad = r * r
     val = b["intercept"]
     if b.get("usa_rodada"):
         val += b.get("beta_rodada", 0.0) * r
     if b.get("usa_rodada2"):
-        val += b.get("beta_rodada2", 0.0) * r * r
+        val += b.get("beta_rodada2", 0.0) * r_quad
     if b.get("usa_forma"):
         val += b.get("beta_forma", 0.0) * forma_recente
     if b.get("usa_forca"):
@@ -1390,6 +1468,26 @@ def _prever_acumulado(
     if b.get("usa_prop_casa"):
         val += b.get("beta_prop_casa", 0.0) * prop_casa
     return max(val, 0.0)
+
+
+def _forma_misturada_projecao(
+    jogos: list[Jogo],
+    time: str,
+    jogo: Jogo,
+    *,
+    r_ini: int,
+    r_fim_obs: int,
+    horizonte: int,
+) -> float:
+    """Mistura forma recente e forma geral com peso decrescente no horizonte."""
+    fr = forma_recente_ate(
+        jogos, time, jogo.r, jogo.hora, incluir_proj=True
+    )
+    fg = media_pts_jogo(jogos, time, r_ini, r_fim_obs, "simples")["geral"]
+    if fg <= 0:
+        fg = 1.0
+    w = peso_forma_recente_horizonte(horizonte)
+    return w * fr + (1.0 - w) * fg
 
 
 def _contexto_projecao_acumulada(
@@ -1660,11 +1758,13 @@ def aplicar_projecoes_acumulada(
     label = NOME_REGRESSAO_ACUMULADA[variante]
     log_rows: list[dict] = []
     rodadas_pendentes = sorted({j.r for j in jogos if not j.jogado})
+    ult_r_real = max((j.r for j in jogos if j.jogado), default=r_fim)
 
     for r in rodadas_pendentes:
         jogos_r = [
             j for j in jogos if j.r == r and not j.jogado
         ]
+        horizonte = max(1, r - ult_r_real)
         for j in sorted(jogos_r, key=lambda x: (x.hora, x.mand)):
             m, v = j.mand, j.vis
             prev_m = _acum_proj_ate(acum_cache, m, r - 1, jogos, r_fim)
@@ -1676,6 +1776,14 @@ def aplicar_projecoes_acumulada(
             prop_v, forca_v, forma_v = _contexto_projecao_acumulada(
                 jogos, v, j, forca_map
             )
+            if betas[m].get("forma_decaindo"):
+                forma_m = _forma_misturada_projecao(
+                    jogos, m, j, r_ini=r_ini, r_fim_obs=r_fim, horizonte=horizonte
+                )
+            if betas[v].get("forma_decaindo"):
+                forma_v = _forma_misturada_projecao(
+                    jogos, v, j, r_ini=r_ini, r_fim_obs=r_fim, horizonte=horizonte
+                )
             target_m = _prever_acumulado(
                 betas[m],
                 r,
@@ -1693,6 +1801,10 @@ def aplicar_projecoes_acumulada(
 
             delta_m = max(0.0, target_m - prev_m)
             delta_v = max(0.0, target_v - prev_v)
+            if betas[m].get("limita_delta_rodada"):
+                delta_m = min(DELTA_PTS_MAX_POR_RODADA, delta_m)
+            if betas[v].get("limita_delta_rodada"):
+                delta_v = min(DELTA_PTS_MAX_POR_RODADA, delta_v)
             j.proj_pm, j.proj_pv = delta_m, delta_v
             j.origem = label
             acum_cache[m][r] = prev_m + delta_m

@@ -35,6 +35,7 @@ Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arr
 4. **Média casa x fora × forma recente**
 5. **Média casa x fora** — só média pts/jogo em casa ou fora (sem forma recente)
 6. **Repetir 1º turno** — espelha ida/volta já disputada; fallback pela média × forma recente
+7. **Regressão Completa com Limites (efeitos fixos)** — como a Completa, com Rodada Centrada ao Quadrado (Rodada − 19), delta ≤ 3 pts/rodada e forma recente com peso decrescente (80% → 50% em 5 rodadas, piso 25%)
 
 Desempate na classificação: vitórias → saldo de gols → gols marcados → confronto direto entre empatados.
 

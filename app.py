@@ -209,6 +209,14 @@ _MODO_COMPLETA = (
     "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + "
     "Forma Recente + Força dos Adversários Passados + Proporção Casa"
 )
+_MODO_COMPLETA_LIMITES = (
+    "Regressão Completa com Limites (efeitos fixos) — "
+    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + "
+    "Rodada Centrada ao Quadrado + Interação Rodada × Time + "
+    "Interação Rodada Centrada ao Quadrado × Time + Forma Recente + "
+    "Força dos Adversários Passados + Proporção Casa "
+    "(delta ≤ 3 pts/rodada; forma recente com peso decrescente)"
+)
 _MODO_MEDIA = "Média casa x fora × forma recente"
 _MODO_MEDIA_CASA_FORA = "Média casa x fora"
 _MODO_TURNO = "Repetir 1º turno"
@@ -220,6 +228,7 @@ _modo_opcoes = [
     _MODO_MEDIA,
     _MODO_MEDIA_CASA_FORA,
     _MODO_TURNO,
+    _MODO_COMPLETA_LIMITES,
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
@@ -233,6 +242,9 @@ if modo_label.startswith("Regressão de Momento e Histórico"):
 elif modo_label.startswith("Regressão de Momento e Aceleração"):
     modo = "regressao_momento_aceleracao"
     variante_acum = "momento_aceleracao"
+elif modo_label.startswith("Regressão Completa com Limites"):
+    modo = "regressao_completa_limites"
+    variante_acum = "completa_limites"
 elif modo_label.startswith("Regressão Completa"):
     modo = "regressao_completa"
     variante_acum = "completa"
@@ -248,13 +260,23 @@ else:
 
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
-        st.caption(
-            "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
-            "e, quando aplicável, Interação Rodada ao Quadrado × Time "
-            "(time de referência com interações nulas). "
-            "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal. "
-            "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
-        )
+        if variante_acum == "completa_limites":
+            st.caption(
+                "Efeitos fixos com Rodada Centrada ao Quadrado "
+                f"(Rodada − {19}). Delta por rodada limitado a 3 pontos. "
+                "Forma = mistura de forma recente e forma geral, com peso da "
+                "recente caindo de 80% (próxima rodada) para 50% (daqui a 5) "
+                "até o piso de 25%. Significância: "
+                "*** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
+            )
+        else:
+            st.caption(
+                "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
+                "e, quando aplicável, Interação Rodada ao Quadrado × Time "
+                "(time de referência com interações nulas). "
+                "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal. "
+                "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
+            )
         st.dataframe(
             tabela_regressao_acumulada_resumo(
                 _jogos_base, r_ini_proj, r_fim_proj, variante_acum
