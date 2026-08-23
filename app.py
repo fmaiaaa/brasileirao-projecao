@@ -207,44 +207,38 @@ if r_fim_proj < r_ini_proj:
     st.warning("Rodada fim (projeção) menor que início — usando fim = início.")
     r_fim_proj = r_ini_proj
 
-_modo_opcoes = [
-    "Regressão linear — pts ~ rodada + indicador_casa + rodada × indicador_casa",
-    "Média simples única",
-    "Média simples separada",
-    "Repetir 1º turno",
-    "Regressão linear — pts ~ rodada + indicador_casa",
-    (
-        "Regressão linear — pts ~ rodada + indicador_casa + rodada × indicador_casa "
-        "+ força adversário + turno + forma recente (últimos 5 jogos)"
-    ),
-]
+_MODO_SIMPLES = "Regressão linear + simples"
+_MODO_ROBUSTA = "Regressão linear + robusta"
+_MODO_MEDIA = "Média simples casa x fora"
+_MODO_TURNO = "Repetir 1 turno"
+
+_modo_opcoes = [_MODO_SIMPLES, _MODO_ROBUSTA, _MODO_MEDIA, _MODO_TURNO]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
 modo: ModoProjecao
 tipo: TipoRegressao
 variante: VarianteRegressao = "interacao"
 
-if modo_label == "Média simples única":
-    modo = "media_simples"
-    tipo = "simples"
-elif modo_label == "Média simples separada":
-    modo = "media_simples"
-    tipo = "mandante_visitante"
-elif modo_label == "Repetir 1º turno":
-    modo = "repetir_turno"
-    tipo = "mandante_visitante"
-elif modo_label == "Regressão linear — pts ~ rodada + indicador_casa":
-    modo = "regressao"
-    tipo = "mandante_visitante"
-    variante = "casa_sem_interacao"
-elif "força adversário + turno" in modo_label:
+if modo_label == _MODO_ROBUSTA:
     modo = "regressao"
     tipo = "mandante_visitante"
     variante = "interacao_adv_turno"
+elif modo_label == _MODO_MEDIA:
+    modo = "media_simples"
+    tipo = "mandante_visitante"
+elif modo_label == _MODO_TURNO:
+    modo = "repetir_turno"
+    tipo = "mandante_visitante"
 else:
     modo = "regressao"
     tipo = "mandante_visitante"
     variante = "interacao"
+
+if modo_label == _MODO_ROBUSTA:
+    st.caption(
+        "Inclui força adversário (média pts/jogo do oponente no intervalo), "
+        "turno e forma recente (últimos 5 jogos)."
+    )
 
 jogos_proj, df_log = aplicar_projecoes(
     _jogos_base, modo, int(r_ini_proj), int(r_fim_proj), tipo, variante_reg=variante
