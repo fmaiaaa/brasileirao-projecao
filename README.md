@@ -27,9 +27,10 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 
 ## Modos de projeção
 
-- **Regressão linear:** inclinação dos pts acumulados no intervalo (beta pts/rodada).
-- **Média simples:** média de pontos por jogo no intervalo; pode separar casa/fora.
-- **Repetir 1º turno:** espelha ida/volta já disputada; fallback por regressão ou média.
+- **Regressão linear:** `pts ~ rodada + indicador_casa + rodada × indicador_casa`
+- **Média simples única:** média de pontos por jogo no intervalo (casa e fora juntos)
+- **Média simples separada:** médias distintas em casa e fora
+- **Repetir 1º turno:** espelha ida/volta já disputada; fallback sempre por regressão linear
 
 ## Deploy Streamlit Cloud
 

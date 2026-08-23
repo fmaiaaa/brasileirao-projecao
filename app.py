@@ -68,57 +68,14 @@ kpi_row([
     ("Média pts visitantes", f"{_kpi['media_pts_visitante']:.2f}", False),
 ])
 
-titulo_secao("Configuração da projeção")
+titulo_secao("Estatísticas por time (intervalo selecionado)")
 
-c1, c2 = st.columns(2)
-with c1:
-    modo_label = st.radio(
-        "Modo de projeção",
-        options=[
-            "Regressão linear (betas por rodada)",
-            "Média simples (pts por jogo/rodada)",
-            "Repetir 1º turno (só jogos faltantes)",
-        ],
-        index=0,
-    )
-    if "Regressão" in modo_label:
-        modo: ModoProjecao = "regressao"
-    elif "Média" in modo_label:
-        modo = "media_simples"
-    else:
-        modo = "repetir_turno"
-with c2:
-    tipo_label = st.radio(
-        "Efeito mando de campo",
-        options=[
-            "Simples (único para casa e fora)",
-            "Mandante × Visitante (casa/fora separados)",
-        ],
-        index=0,
-    )
-    tipo: TipoRegressao = (
-        "mandante_visitante" if "Mandante" in tipo_label else "simples"
-    )
-
-if modo == "repetir_turno":
-    fb_label = st.radio(
-        "Fallback quando não há jogo espelhado",
-        options=["Regressão linear", "Média simples"],
-        index=0,
-        horizontal=True,
-    )
-    modo_fallback: ModoProjecao = (
-        "media_simples" if "Média" in fb_label else "regressao"
-    )
-else:
-    modo_fallback = "regressao"
-
-c3, c4 = st.columns(2)
-with c3:
+c_janela1, c_janela2 = st.columns(2)
+with c_janela1:
     r_ini = st.number_input(
         "Rodada início (janela)", min_value=1, max_value=38, value=1, step=1
     )
-with c4:
+with c_janela2:
     r_fim = st.number_input(
         "Rodada fim (janela)",
         min_value=1,
@@ -130,11 +87,6 @@ if r_fim < r_ini:
     st.warning("Rodada fim menor que início — usando fim = início.")
     r_fim = r_ini
 
-jogos_proj, df_log = aplicar_projecoes(
-    _jogos_base, modo, int(r_ini), int(r_fim), tipo, modo_fallback=modo_fallback
-)
-
-titulo_secao("Estatísticas por time (intervalo selecionado)")
 st.dataframe(
     tabela_estatisticas_times(_jogos_base, int(r_ini), int(r_fim)),
     use_container_width=True,
@@ -146,6 +98,33 @@ with st.expander("Dados carregados"):
         st.dataframe(_df_fonte, use_container_width=True, hide_index=True)
     else:
         st.info("Sem preview tabular.")
+
+titulo_secao("Configuração da projeção")
+
+_modo_opcoes = [
+    "Regressão linear — pts ~ rodada + indicador_casa + rodada × indicador_casa",
+    "Média simples única",
+    "Média simples separada",
+    "Repetir 1º turno",
+]
+modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
+
+if modo_label.startswith("Regressão"):
+    modo: ModoProjecao = "regressao"
+    tipo: TipoRegressao = "mandante_visitante"
+elif modo_label == "Média simples única":
+    modo = "media_simples"
+    tipo = "simples"
+elif modo_label == "Média simples separada":
+    modo = "media_simples"
+    tipo = "mandante_visitante"
+else:
+    modo = "repetir_turno"
+    tipo = "mandante_visitante"
+
+jogos_proj, df_log = aplicar_projecoes(
+    _jogos_base, modo, int(r_ini), int(r_fim), tipo
+)
 
 titulo_secao("Classificação")
 st.dataframe(
@@ -171,22 +150,19 @@ if times_graf:
     mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
     mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
 
-    for i in range(0, len(times_graf), 2):
-        cols = st.columns(2)
-        for col, time in zip(cols, times_graf[i : i + 2]):
-            with col:
-                st.markdown(
-                    f'<p class="vel-kpi-time-label">{time}</p>',
-                    unsafe_allow_html=True,
-                )
-                pa, pta = mapa_atual.get(time, (0, 0))
-                pf, ptf = mapa_final.get(time, (0, 0))
-                kpi_duo(
-                    "Classificação Atual",
-                    f"{pa}º · {pta} pts",
-                    "Classificação Final",
-                    f"{pf}º · {ptf} pts",
-                )
+    for time in times_graf:
+        st.markdown(
+            f'<p class="vel-kpi-time-label">{time}</p>',
+            unsafe_allow_html=True,
+        )
+        pa, pta = mapa_atual.get(time, (0, 0))
+        pf, ptf = mapa_final.get(time, (0, 0))
+        kpi_duo(
+            "Classificação Atual",
+            f"{pa}º · {pta} pts",
+            "Classificação Final",
+            f"{pf}º · {ptf} pts",
+        )
 
     evolucoes = [
         evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
