@@ -32,6 +32,8 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 - **Média simples separada:** médias distintas em casa e fora
 - **Repetir 1º turno:** espelha ida/volta já disputada; fallback sempre por regressão linear
 
+Desempate na classificação: vitórias → saldo de gols → gols marcados → confronto direto entre empatados.
+
 ## Deploy Streamlit Cloud
 
 - Main file: `app.py`

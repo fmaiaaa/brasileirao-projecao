@@ -513,24 +513,20 @@ def aplicar_projecoes(
 
 
 def classificacao(jogos: list[Jogo], incluir_proj: bool = True) -> pd.DataFrame:
-    pts: dict[str, int] = {t: 0 for t in times_do_calendario(jogos)}
     jog_real, jog_proj = 0, 0
-
     for j in jogos:
         if j.jogado:
-            pm, pv = j.pts_reais()  # type: ignore[misc]
             jog_real += 1
         elif incluir_proj and j.proj_pm is not None:
-            pm, pv = j.proj_pm, j.proj_pv
             jog_proj += 1
-        else:
-            continue
-        pts[j.mand] += pm
-        pts[j.vis] += pv
 
+    linhas = ordenar_times_desempate(jogos, incluir_proj=incluir_proj)
     df = pd.DataFrame(
-        {"Time": list(pts.keys()), "Pontos": list(pts.values())}
-    ).sort_values(["Pontos", "Time"], ascending=[False, True])
+        {
+            "Time": [t for t, _ in linhas],
+            "Pontos": [s.pts for _, s in linhas],
+        }
+    )
     df.insert(0, "Pos", range(1, len(df) + 1))
     df.attrs["jog_real"] = jog_real
     df.attrs["jog_proj"] = jog_proj
@@ -713,6 +709,7 @@ class StatsTime:
         return self.gf - self.gc
 
     def chave_classificacao(self) -> tuple:
+        """Critérios gerais: pts, vitórias, saldo, gols marcados (sem confronto)."""
         return (-self.pts, -self.vit, -self.sg, -self.gf)
 
     def copy(self) -> "StatsTime":
@@ -815,6 +812,118 @@ def stats_acumuladas_ate(
     return total
 
 
+def _chave_criterios_basicos(s: StatsTime) -> tuple[int, int, int, int]:
+    return (s.pts, s.vit, s.sg, s.gf)
+
+
+def stats_mapa_times(
+    jogos: list[Jogo],
+    *,
+    incluir_proj: bool,
+    ate_rodada: int = 38,
+) -> dict[str, StatsTime]:
+    so_realizados = not incluir_proj
+    return {
+        t: stats_acumuladas_ate(
+            jogos, t, ate_rodada, so_realizados=so_realizados
+        )
+        for t in times_do_calendario(jogos)
+    }
+
+
+def stats_confronto_grupo(
+    jogos: list[Jogo],
+    time: str,
+    grupo: frozenset[str],
+    *,
+    incluir_proj: bool,
+    ate_rodada: int = 38,
+) -> StatsTime:
+    """Estatísticas só nos jogos entre times do grupo empatado."""
+    so_realizados = not incluir_proj
+    total = StatsTime()
+    for j in jogos:
+        if j.r > ate_rodada:
+            continue
+        if j.mand not in grupo or j.vis not in grupo:
+            continue
+        if time not in (j.mand, j.vis):
+            continue
+        if so_realizados:
+            if not j.jogado:
+                continue
+            st = _stats_jogo_para_time(j, time)
+        elif j.jogado:
+            st = _stats_jogo_para_time(j, time)
+        elif j.proj_pm is not None:
+            st = _stats_jogo_para_time(j, time)
+        else:
+            st = None
+        if st:
+            total.add(st.pts, st.gf, st.gc)
+    return total
+
+
+def ordenar_stats_desempate(
+    jogos: list[Jogo],
+    stats: dict[str, StatsTime],
+    *,
+    incluir_proj: bool,
+    ate_rodada: int = 38,
+) -> list[tuple[str, StatsTime]]:
+    """
+    Desempate: pontos → vitórias → saldo → gols marcados → confronto direto.
+    """
+    times = list(stats.keys())
+    grupos: dict[tuple[int, int, int, int], list[str]] = {}
+    for t in times:
+        grupos.setdefault(_chave_criterios_basicos(stats[t]), []).append(t)
+
+    ordenado: list[tuple[str, StatsTime]] = []
+    for chave in sorted(
+        grupos.keys(), key=lambda k: (-k[0], -k[1], -k[2], -k[3])
+    ):
+        grupo = grupos[chave]
+        if len(grupo) == 1:
+            t = grupo[0]
+            ordenado.append((t, stats[t]))
+            continue
+        gset = frozenset(grupo)
+        confronto = {
+            t: stats_confronto_grupo(
+                jogos, t, gset, incluir_proj=incluir_proj, ate_rodada=ate_rodada
+            )
+            for t in grupo
+        }
+        sub = sorted(
+            grupo,
+            key=lambda t: (
+                -confronto[t].pts,
+                -confronto[t].vit,
+                -confronto[t].sg,
+                -confronto[t].gf,
+                t,
+            ),
+        )
+        for t in sub:
+            ordenado.append((t, stats[t]))
+    return ordenado
+
+
+def ordenar_times_desempate(
+    jogos: list[Jogo],
+    *,
+    incluir_proj: bool,
+    ate_rodada: int = 38,
+) -> list[tuple[str, StatsTime]]:
+    stats = stats_mapa_times(
+        jogos, incluir_proj=incluir_proj, ate_rodada=ate_rodada
+    )
+    return ordenar_stats_desempate(
+        jogos, stats, incluir_proj=incluir_proj, ate_rodada=ate_rodada
+    )
+
+
 def posicao_time_na_rodada(
     jogos: list[Jogo],
     time: str,
@@ -824,14 +933,17 @@ def posicao_time_na_rodada(
     """Posição na tabela ao fim da rodada (só jogos realizados + extras opcionais)."""
     times = times_do_calendario(jogos)
     extra = extra or {}
-    linhas = []
+    stats: dict[str, StatsTime] = {}
     for t in times:
         s = stats_acumuladas_ate(jogos, t, rodada, so_realizados=True)
         if t in extra:
             e = extra[t]
             s.add(e.pts, e.gf, e.gc)
-        linhas.append((t, s.chave_classificacao()))
-    linhas.sort(key=lambda x: x[1])
+        stats[t] = s
+
+    linhas = ordenar_stats_desempate(
+        jogos, stats, incluir_proj=False, ate_rodada=rodada
+    )
     for i, (t, _) in enumerate(linhas, 1):
         if t == time:
             return i
@@ -857,21 +969,22 @@ def jogo_faltante_pode_afetar_posicao(
     if pos_melhor != pos_pior:
         return True
 
-    # empate na posição numérica: compara chave completa com vizinhos
-    times = times_do_calendario(jogos)
-    chaves = {}
-    for cen, label in ((melhor, "m"), (pior, "p")):
-        extra = {time: cen}
-        linhas = []
-        for t in times:
+    def _posicao_com_extra(cen: StatsTime) -> tuple[int, tuple]:
+        st_extra = {time: cen}
+        stats_c: dict[str, StatsTime] = {}
+        for t in times_do_calendario(jogos):
             s = stats_acumuladas_ate(jogos, t, jogo.r, so_realizados=True)
-            if t in extra:
-                s.add(extra[t].pts, extra[t].gf, extra[t].gc)
-            linhas.append((t, s.chave_classificacao()))
-        linhas.sort(key=lambda x: x[1])
-        chaves[label] = next(k for t, k in linhas if t == time)
+            if t in st_extra:
+                s.add(st_extra[t].pts, st_extra[t].gf, st_extra[t].gc)
+            stats_c[t] = s
+        linhas = ordenar_stats_desempate(
+            jogos, stats_c, incluir_proj=False, ate_rodada=jogo.r
+        )
+        pos = next(i for i, (t, _) in enumerate(linhas, 1) if t == time)
+        chave = next(s for t, s in linhas if t == time)
+        return pos, _chave_criterios_basicos(chave)
 
-    return chaves["m"] != chaves["p"]
+    return _posicao_com_extra(melhor) != _posicao_com_extra(pior)
 
 
 def ultima_rodada_com_resultado(jogos: list[Jogo]) -> int:
