@@ -14,6 +14,7 @@ from brasileirao_estilo import (
 from brasileirao_projecao_core import (
     ModoProjecao,
     TipoRegressao,
+    VarianteRegressao,
     aplicar_projecoes,
     carregar_jogos,
     evolucao_pontos_time,
@@ -136,24 +137,51 @@ _modo_opcoes = [
     "Média simples única",
     "Média simples separada",
     "Repetir 1º turno",
+    "Regressão linear — pts ~ rodada + indicador_casa",
+    "Regressão linear — pts ~ rodada + casa + interação + força adversário",
+    "Regressão linear — gols ~ rodada + casa + interação",
+    "Regressão linear — pts ~ rodada + casa + interação + turno",
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
-if modo_label.startswith("Regressão"):
-    modo: ModoProjecao = "regressao"
-    tipo: TipoRegressao = "mandante_visitante"
-elif modo_label == "Média simples única":
+modo: ModoProjecao
+tipo: TipoRegressao
+variante: VarianteRegressao = "interacao"
+
+if modo_label == "Média simples única":
     modo = "media_simples"
     tipo = "simples"
 elif modo_label == "Média simples separada":
     modo = "media_simples"
     tipo = "mandante_visitante"
-else:
+elif modo_label == "Repetir 1º turno":
     modo = "repetir_turno"
     tipo = "mandante_visitante"
+elif modo_label == "Regressão linear — pts ~ rodada + indicador_casa":
+    modo = "regressao"
+    tipo = "mandante_visitante"
+    variante = "casa_sem_interacao"
+elif modo_label == (
+    "Regressão linear — pts ~ rodada + casa + interação + força adversário"
+):
+    modo = "regressao"
+    tipo = "mandante_visitante"
+    variante = "interacao_adv"
+elif modo_label == "Regressão linear — gols ~ rodada + casa + interação":
+    modo = "regressao"
+    tipo = "mandante_visitante"
+    variante = "interacao_gols"
+elif modo_label == "Regressão linear — pts ~ rodada + casa + interação + turno":
+    modo = "regressao"
+    tipo = "mandante_visitante"
+    variante = "interacao_turno"
+else:
+    modo = "regressao"
+    tipo = "mandante_visitante"
+    variante = "interacao"
 
 jogos_proj, df_log = aplicar_projecoes(
-    _jogos_base, modo, int(r_ini_proj), int(r_fim_proj), tipo
+    _jogos_base, modo, int(r_ini_proj), int(r_fim_proj), tipo, variante_reg=variante
 )
 
 titulo_secao("Classificação")

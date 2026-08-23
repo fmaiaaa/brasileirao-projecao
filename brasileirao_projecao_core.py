@@ -11,6 +11,13 @@ import pandas as pd
 
 ModoProjecao = Literal["regressao", "media_simples", "repetir_turno"]
 TipoRegressao = Literal["simples", "mandante_visitante"]
+VarianteRegressao = Literal[
+    "interacao",
+    "casa_sem_interacao",
+    "interacao_adv",
+    "interacao_gols",
+    "interacao_turno",
+]
 
 _DIR_APP = Path(__file__).resolve().parent
 ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
@@ -45,6 +52,8 @@ class Jogo:
     est: str = ""
     proj_pm: int | None = field(default=None, repr=False)
     proj_pv: int | None = field(default=None, repr=False)
+    proj_gm: int | None = field(default=None, repr=False)
+    proj_gv: int | None = field(default=None, repr=False)
     origem: str = field(default="", repr=False)
 
     @property
@@ -178,60 +187,197 @@ def _ols_pts_rodada(rodadas: np.ndarray, pts: np.ndarray) -> tuple[float, float]
     return float(coef[0]), float(coef[1])
 
 
-def _regressao_interacao_mando(
-    rodadas: np.ndarray,
-    indicador_casa: np.ndarray,
-    pts: np.ndarray,
+def mapa_forca_adversario(
+    jogos: list[Jogo], r_ini: int, r_fim: int
 ) -> dict[str, float]:
-    """
-    pts ~ intercept + beta_rodada*rodada + beta_casa*I_casa + beta_inter*rodada*I_casa.
-    Fora: pts = b0 + b1*r  |  Casa: pts = (b0+b2) + (b1+b3)*r
-    """
-    n = len(pts)
-    n_casa = int(indicador_casa.sum())
-    n_fora = n - n_casa
+    """Média de pts/jogo no intervalo (força do adversário)."""
+    return {
+        t: media_pts_jogo(jogos, t, r_ini, r_fim, "simples")["geral"]
+        for t in times_do_calendario(jogos)
+    }
 
+
+def _coletar_obs_regressao(
+    jogos: list[Jogo],
+    time: str,
+    r_ini: int,
+    r_fim: int,
+    *,
+    alvo: Literal["pts", "gols"],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
+    rodadas: list[float] = []
+    casa: list[float] = []
+    turno: list[float] = []
+    y_vals: list[float] = []
+    adversarios: list[str] = []
+
+    for j in jogos:
+        if not j.jogado or j.r < r_ini or j.r > r_fim:
+            continue
+        parsed = parse_placar(j.placar)
+        if parsed is None:
+            continue
+        gm, gv = parsed
+        if j.mand == time:
+            rodadas.append(float(j.r))
+            casa.append(1.0)
+            turno.append(1.0 if j.r >= 20 else 0.0)
+            adversarios.append(j.vis)
+            y_vals.append(float(gm if alvo == "gols" else pontos_placar(gm, gv)[0]))
+        elif j.vis == time:
+            rodadas.append(float(j.r))
+            casa.append(0.0)
+            turno.append(1.0 if j.r >= 20 else 0.0)
+            adversarios.append(j.mand)
+            y_vals.append(float(gv if alvo == "gols" else pontos_placar(gm, gv)[1]))
+
+    return (
+        np.array(rodadas, dtype=float),
+        np.array(casa, dtype=float),
+        np.array(turno, dtype=float),
+        np.array(y_vals, dtype=float),
+        adversarios,
+    )
+
+
+def _ajustar_regressao(
+    rodadas: np.ndarray,
+    casa: np.ndarray,
+    turno: np.ndarray,
+    y: np.ndarray,
+    adversarios: list[str],
+    forca_map: dict[str, float],
+    variante: VarianteRegressao,
+) -> dict[str, float]:
+    """Ajusta OLS conforme a variante selecionada."""
+    alvo: Literal["pts", "gols"] = "gols" if variante == "interacao_gols" else "pts"
+    usa_interacao = variante != "casa_sem_interacao"
+    usa_forca = variante == "interacao_adv"
+    usa_turno = variante == "interacao_turno"
+
+    n = len(y)
+    padrao = 1.0 if alvo == "pts" else 1.2
     if n == 0:
-        return {
-            "geral": 1.0,
-            "casa": 1.0,
-            "fora": 1.0,
-            "intercept": 1.0,
-            "beta_rodada": 0.0,
-            "beta_casa_ind": 0.0,
-            "beta_interacao": 0.0,
-        }
-
-    b0_g, b1_g = _ols_pts_rodada(rodadas, pts)
-
-    if n_fora == 0 or n_casa == 0 or n < 4:
-        b0, b1 = b0_g, b1_g
-        return {
-            "geral": max(b1_g, 0.0),
-            "casa": max(b1_g, 0.0),
-            "fora": max(b1_g, 0.0),
-            "intercept": b0,
-            "beta_rodada": b1,
-            "beta_casa_ind": 0.0,
-            "beta_interacao": 0.0,
-        }
+        return _coeficientes_vazios(variante, alvo, padrao)
 
     r = rodadas.astype(float)
-    casa = indicador_casa.astype(float)
-    y = pts.astype(float)
-    X = np.column_stack([np.ones(n), r, casa, r * casa])
-    coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-    b0, b1, b2, b3 = (float(c) for c in coef)
+    b0_g, b1_g = _ols_pts_rodada(r, y)
+
+    def _montar(interacao: bool, forca: bool, turno_flag: bool, casa_flag: bool):
+        cols = [np.ones(n), r]
+        if casa_flag:
+            cols.append(casa.astype(float))
+        if interacao:
+            cols.append(r * casa.astype(float))
+        if forca:
+            cols.append(
+                np.array([forca_map.get(a, 1.0) for a in adversarios], dtype=float)
+            )
+        if turno_flag:
+            cols.append(turno.astype(float))
+        return cols
+
+    def _extrair(coef: np.ndarray, interacao: bool, forca: bool, turno_flag: bool, casa_flag: bool):
+        idx = 0
+        b0 = float(coef[idx]); idx += 1
+        b1 = float(coef[idx]); idx += 1
+        b2 = b3 = b4 = b5 = 0.0
+        if casa_flag:
+            b2 = float(coef[idx]); idx += 1
+        if interacao:
+            b3 = float(coef[idx]); idx += 1
+        if forca:
+            b4 = float(coef[idx]); idx += 1
+        if turno_flag:
+            b5 = float(coef[idx])
+        return b0, b1, b2, b3, b4, b5
+
+    tentativas = [
+        (usa_interacao, usa_forca, usa_turno, True),
+        (usa_interacao, False, usa_turno, True),
+        (usa_interacao, False, False, True),
+        (False, False, False, True),
+        (False, False, False, False),
+    ]
+    seen: set[tuple[bool, bool, bool, bool]] = set()
+    b0, b1, b2, b3, b4, b5 = b0_g, b1_g, 0.0, 0.0, 0.0, 0.0
+    fit_interacao = fit_forca = fit_turno = fit_casa = usa_interacao
+    for interacao, forca, turno_flag, casa_flag in tentativas:
+        key = (interacao, forca, turno_flag, casa_flag)
+        if key in seen:
+            continue
+        seen.add(key)
+        cols = _montar(interacao, forca, turno_flag, casa_flag)
+        if n < len(cols):
+            continue
+        coef, _, _, _ = np.linalg.lstsq(np.column_stack(cols), y.astype(float), rcond=None)
+        b0, b1, b2, b3, b4, b5 = _extrair(coef, interacao, forca, turno_flag, casa_flag)
+        fit_interacao, fit_forca, fit_turno, fit_casa = interacao, forca, turno_flag, casa_flag
+        break
 
     return {
         "geral": max(b1_g, 0.0),
-        "casa": max(b1 + b3, 0.0),
+        "casa": max(b1 + (b3 if fit_interacao else 0.0), 0.0),
         "fora": max(b1, 0.0),
         "intercept": b0,
         "beta_rodada": b1,
-        "beta_casa_ind": b2,
-        "beta_interacao": b3,
+        "beta_casa_ind": b2 if fit_casa else 0.0,
+        "beta_interacao": b3 if fit_interacao else 0.0,
+        "beta_forca": b4 if fit_forca else 0.0,
+        "beta_turno": b5 if fit_turno else 0.0,
+        "variante": variante,
+        "alvo": alvo,
+        "usa_casa": fit_casa,
+        "usa_interacao": fit_interacao,
+        "usa_forca": fit_forca,
+        "usa_turno": fit_turno,
     }
+
+
+def _coeficientes_vazios(
+    variante: VarianteRegressao,
+    alvo: Literal["pts", "gols"],
+    padrao: float,
+) -> dict[str, float]:
+    return {
+        "geral": padrao,
+        "casa": padrao,
+        "fora": padrao,
+        "intercept": padrao,
+        "beta_rodada": 0.0,
+        "beta_casa_ind": 0.0,
+        "beta_interacao": 0.0,
+        "beta_forca": 0.0,
+        "beta_turno": 0.0,
+        "variante": variante,
+        "alvo": alvo,
+        "usa_casa": variante != "casa_sem_interacao",
+        "usa_interacao": variante not in ("casa_sem_interacao",),
+        "usa_forca": variante == "interacao_adv",
+        "usa_turno": variante == "interacao_turno",
+    }
+
+
+def _prever_regressao(
+    b: dict[str, float],
+    *,
+    rodada: int,
+    em_casa: bool,
+    adversario: str,
+    forca_map: dict[str, float],
+) -> float:
+    r = float(rodada)
+    casa = 1.0 if em_casa else 0.0
+    val = b["intercept"] + b["beta_rodada"] * r
+    if b.get("usa_casa"):
+        val += b.get("beta_casa_ind", 0.0) * casa
+    if b.get("usa_interacao"):
+        val += b.get("beta_interacao", 0.0) * r * casa
+    if b.get("usa_forca"):
+        val += b.get("beta_forca", 0.0) * forca_map.get(adversario, 1.0)
+    if b.get("usa_turno"):
+        val += b.get("beta_turno", 0.0) * (1.0 if rodada >= 20 else 0.0)
+    return max(val, 0.0)
 
 
 def regressao_beta(
@@ -239,53 +385,16 @@ def regressao_beta(
     time: str,
     r_ini: int,
     r_fim: int,
-    tipo: TipoRegressao,
+    variante: VarianteRegressao,
+    forca_map: dict[str, float],
 ) -> dict[str, float]:
-    """
-    Retorna coeficientes de projeção no intervalo [r_ini, r_fim].
-    simples: inclinação do acumulado por rodada (pts/rodada).
-    mandante_visitante: OLS por jogo
-        pts ~ rodada + indicador_casa + rodada × indicador_casa.
-    """
-    pts_por_r: dict[int, int] = {}
-    rodadas_jogo: list[int] = []
-    indicador_casa: list[float] = []
-    pts_jogo: list[float] = []
-
-    for j in jogos:
-        if not j.jogado or j.r < r_ini or j.r > r_fim:
-            continue
-        pm, pv = j.pts_reais()
-        if j.mand == time:
-            pts_por_r[j.r] = pts_por_r.get(j.r, 0) + pm
-            rodadas_jogo.append(j.r)
-            indicador_casa.append(1.0)
-            pts_jogo.append(float(pm))
-        elif j.vis == time:
-            pts_por_r[j.r] = pts_por_r.get(j.r, 0) + pv
-            rodadas_jogo.append(j.r)
-            indicador_casa.append(0.0)
-            pts_jogo.append(float(pv))
-
-    def slope_from_round_dict(d: dict[int, int]) -> float:
-        if not d:
-            return 1.0
-        rounds = sorted(d.keys())
-        acum = np.cumsum([d[r] for r in rounds]).astype(float)
-        xs = np.array(rounds, dtype=float)
-        if len(xs) < 2:
-            return float(acum[-1]) / max(len(xs), 1)
-        coef = np.polyfit(xs, acum, 1)
-        return float(coef[0])
-
-    beta_geral = slope_from_round_dict(pts_por_r)
-    if tipo == "simples":
-        return {"geral": max(beta_geral, 0.0)}
-
-    return _regressao_interacao_mando(
-        np.array(rodadas_jogo, dtype=float),
-        np.array(indicador_casa, dtype=float),
-        np.array(pts_jogo, dtype=float),
+    """Coeficientes de regressão por jogo conforme variante."""
+    alvo: Literal["pts", "gols"] = "gols" if variante == "interacao_gols" else "pts"
+    rodadas, casa, turno, y, adversarios = _coletar_obs_regressao(
+        jogos, time, r_ini, r_fim, alvo=alvo
+    )
+    return _ajustar_regressao(
+        rodadas, casa, turno, y, adversarios, forca_map, variante
     )
 
 
@@ -338,11 +447,16 @@ def metricas_time(
     r_fim: int,
     modo: ModoProjecao,
     tipo: TipoRegressao,
+    *,
+    variante: VarianteRegressao = "interacao",
+    forca_map: dict[str, float] | None = None,
 ) -> dict[str, float]:
     """Betas (regressão) ou médias (pts/jogo) conforme o modo."""
     if modo == "media_simples":
         return media_pts_jogo(jogos, time, r_ini, r_fim, tipo)
-    return regressao_beta(jogos, time, r_ini, r_fim, tipo)
+    return regressao_beta(
+        jogos, time, r_ini, r_fim, variante, forca_map or {}
+    )
 
 
 def expected_pts_jogo(
@@ -352,22 +466,22 @@ def expected_pts_jogo(
     tipo: TipoRegressao,
     *,
     rodada: int | None = None,
+    adversario: str | None = None,
+    forca_map: dict[str, float] | None = None,
 ) -> float:
     b = betas.get(time, {"geral": 1.0})
     if tipo == "simples":
         return max(b.get("geral", 1.0), 0.0)
 
     if rodada is not None and "intercept" in b:
-        r = float(rodada)
-        b0 = b["intercept"]
-        b1 = b["beta_rodada"]
-        b2 = b.get("beta_casa_ind", 0.0)
-        b3 = b.get("beta_interacao", 0.0)
-        if time == mand:
-            val = b0 + b2 + (b1 + b3) * r
-        else:
-            val = b0 + b1 * r
-        return max(val, 0.0)
+        adv = adversario or (mand if time != mand else "")
+        return _prever_regressao(
+            b,
+            rodada=rodada,
+            em_casa=(time == mand),
+            adversario=adv,
+            forca_map=forca_map or {},
+        )
 
     if time == mand:
         return max(b.get("casa", b.get("geral", 1.0)), 0.0)
@@ -378,21 +492,51 @@ def projetar_jogo_regressao(
     jogo: Jogo,
     betas: dict[str, dict[str, float]],
     tipo: TipoRegressao,
+    *,
+    variante: VarianteRegressao = "interacao",
+    forca_map: dict[str, float] | None = None,
 ) -> tuple[int, int]:
+    fm = forca_map or {}
+    b_m = betas.get(jogo.mand, {"geral": 1.0, "alvo": "pts"})
+    b_v = betas.get(jogo.vis, {"geral": 1.0, "alvo": "pts"})
+    alvo = b_m.get("alvo", "pts")
+
+    if alvo == "gols" or variante == "interacao_gols":
+        gm_f = _prever_regressao(
+            b_m,
+            rodada=jogo.r,
+            em_casa=True,
+            adversario=jogo.vis,
+            forca_map=fm,
+        )
+        gv_f = _prever_regressao(
+            b_v,
+            rodada=jogo.r,
+            em_casa=False,
+            adversario=jogo.mand,
+            forca_map=fm,
+        )
+        gm = min(5, max(0, round(gm_f)))
+        gv = min(5, max(0, round(gv_f)))
+        if gm == 0 and gv == 0:
+            gm, gv = 1, 1
+        jogo.proj_gm, jogo.proj_gv = gm, gv
+        return pontos_placar(gm, gv)
+
     em = expected_pts_jogo(
-        jogo.mand, jogo.mand, betas, tipo, rodada=jogo.r
+        jogo.mand, jogo.mand, betas, tipo,
+        rodada=jogo.r, adversario=jogo.vis, forca_map=fm,
     )
     ev = expected_pts_jogo(
-        jogo.vis, jogo.mand, betas, tipo, rodada=jogo.r
+        jogo.vis, jogo.mand, betas, tipo,
+        rodada=jogo.r, adversario=jogo.mand, forca_map=fm,
     )
     total = em + ev
     if total <= 0:
         return 1, 1
-    # converte expectativa contínua em placar 3/1/0 coerente
     pm_f = 3.0 * em / total
     pv_f = 3.0 * ev / total
     pm, pv = round(pm_f), round(pv_f)
-    # ajuste para soma típica (0-3 cada)
     if pm + pv > 3:
         scale = 3 / (pm + pv)
         pm, pv = int(round(pm * scale)), int(round(pv * scale))
@@ -400,7 +544,6 @@ def projetar_jogo_regressao(
         pm = 3
     if pv > 3:
         pv = 3
-    # desempate por comparação de força
     if pm > pv:
         return 3, 0
     if pv > pm:
@@ -455,20 +598,34 @@ def aplicar_projecoes(
     r_ini: int,
     r_fim: int,
     tipo_reg: TipoRegressao,
+    *,
+    variante_reg: VarianteRegressao = "interacao",
 ) -> tuple[list[Jogo], pd.DataFrame]:
     jogos = [Jogo(**j.__dict__) for j in jogos]  # cópia
     times = times_do_calendario(jogos)
     mapa = mapa_contrapartidas(jogos)
+    forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
 
     if modo == "repetir_turno":
         modo_metrica: ModoProjecao = "regressao"
         tipo_metrica: TipoRegressao = "mandante_visitante"
+        variante_metrica: VarianteRegressao = "interacao"
     else:
         modo_metrica = modo
         tipo_metrica = tipo_reg
+        variante_metrica = variante_reg
 
     betas = {
-        t: metricas_time(jogos, t, r_ini, r_fim, modo_metrica, tipo_metrica)
+        t: metricas_time(
+            jogos,
+            t,
+            r_ini,
+            r_fim,
+            modo_metrica,
+            tipo_metrica,
+            variante=variante_metrica,
+            forca_map=forca_map,
+        )
         for t in times
     }
 
@@ -492,20 +649,31 @@ def aplicar_projecoes(
                 j.proj_pm, j.proj_pv = pm, pv
                 j.origem = f"espelho R{ref.r} ({ref.mand} {ref.placar} {ref.vis})"
             else:
-                pm, pv = projetar_jogo_regressao(j, betas, tipo_metrica)
+                pm, pv = projetar_jogo_regressao(
+                    j, betas, tipo_metrica,
+                    variante=variante_metrica, forca_map=forca_map,
+                )
                 j.proj_pm, j.proj_pv = pm, pv
                 j.origem = label_fallback
         else:
-            pm, pv = projetar_jogo_regressao(j, betas, tipo_reg)
+            pm, pv = projetar_jogo_regressao(
+                j, betas, tipo_reg,
+                variante=variante_reg, forca_map=forca_map,
+            )
             j.proj_pm, j.proj_pv = pm, pv
             j.origem = label_modelo
+
+        if j.proj_gm is not None and j.proj_gv is not None:
+            proj_txt = f"{j.proj_gm} x {j.proj_gv}"
+        else:
+            proj_txt = f"{j.proj_pm} / {j.proj_pv}"
 
         log_rows.append(
             {
                 "Rodada": j.r,
                 "Mandante": j.mand,
                 "Visitante": j.vis,
-                "Proj": f"{j.proj_pm} / {j.proj_pv}",
+                "Proj": proj_txt,
             }
         )
 
@@ -600,6 +768,7 @@ def tabela_estatisticas_times(
     r_fim: int,
 ) -> pd.DataFrame:
     rows = []
+    forca = mapa_forca_adversario(jogos, r_ini, r_fim)
     for time in times_do_calendario(jogos):
         jr = jp = 0
         gf = gc = 0
@@ -631,7 +800,7 @@ def tabela_estatisticas_times(
             else:
                 jp += 1
 
-        betas = regressao_beta(jogos, time, r_ini, r_fim, "mandante_visitante")
+        betas = regressao_beta(jogos, time, r_ini, r_fim, "interacao", forca)
         rows.append(
             {
                 "Time": time,
@@ -758,6 +927,8 @@ def _stats_jogo_para_time(jogo: Jogo, time: str) -> StatsTime | None:
         if p is None:
             return None
         return _stats_de_placar(p[0], p[1], time, jogo.mand)
+    if jogo.proj_gm is not None and jogo.proj_gv is not None:
+        return _stats_de_placar(jogo.proj_gm, jogo.proj_gv, time, jogo.mand)
     if jogo.proj_pm is not None and jogo.proj_pv is not None:
         pts = jogo.proj_pm if time == jogo.mand else jogo.proj_pv
         s = StatsTime()
