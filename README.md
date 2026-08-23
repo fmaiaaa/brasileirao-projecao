@@ -29,7 +29,7 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 
 - **Regressão linear:** `pts ~ rodada + indicador_casa + rodada × indicador_casa`
 - **Regressão — pts ~ rodada + indicador_casa** (sem interação)
-- **Regressão — pts ~ rodada + casa + interação + força adversário + turno**
+- **Regressão — pts ~ rodada + casa + interação + força adversário + turno + forma recente (últimos 5 jogos)**
 - **Média simples única:** média de pontos por jogo no intervalo (casa e fora juntos)
 - **Média simples separada:** médias distintas em casa e fora
 - **Repetir 1º turno:** espelha ida/volta já disputada; fallback sempre por regressão linear

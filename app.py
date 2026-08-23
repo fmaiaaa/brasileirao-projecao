@@ -18,7 +18,10 @@ from brasileirao_projecao_core import (
     aplicar_projecoes,
     carregar_jogos,
     colunas_estatisticas_grafico,
+    estatisticas_por_rodada,
+    colunas_estatisticas_rodada_grafico,
     evolucao_pontos_time,
+    fig_estatisticas_por_rodada,
     fig_estatisticas_times,
     fig_evolucao_times,
     kpis_globais,
@@ -137,6 +140,42 @@ if times_stats_graf and metricas_graf:
 else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 
+_df_stats_rodada = estatisticas_por_rodada(
+    _jogos_base, int(r_ini_stats), int(r_fim_stats)
+)
+
+titulo_secao("Gráfico de estatísticas por rodada")
+_cols_stats_rodada = colunas_estatisticas_rodada_grafico(_df_stats_rodada)
+_default_stats_rodada = [
+    c for c in ("Pontos acumulados", "Posição") if c in _cols_stats_rodada
+]
+
+c_graf_r1, c_graf_r2 = st.columns(2)
+with c_graf_r1:
+    times_rodada_graf = st.multiselect(
+        "Times no gráfico",
+        options=_times,
+        default=_default_times,
+        key="stats_rodada_times",
+    )
+with c_graf_r2:
+    metricas_rodada_graf = st.multiselect(
+        "Estatísticas no gráfico",
+        options=_cols_stats_rodada,
+        default=_default_stats_rodada,
+        key="stats_rodada_metricas",
+    )
+
+if times_rodada_graf and metricas_rodada_graf:
+    st.plotly_chart(
+        fig_estatisticas_por_rodada(
+            _df_stats_rodada, times_rodada_graf, metricas_rodada_graf
+        ),
+        use_container_width=True,
+    )
+else:
+    st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
+
 with st.expander("Dados carregados"):
     if _df_fonte is not None:
         st.dataframe(_df_fonte, use_container_width=True, hide_index=True)
@@ -176,7 +215,7 @@ _modo_opcoes = [
     "Regressão linear — pts ~ rodada + indicador_casa",
     (
         "Regressão linear — pts ~ rodada + indicador_casa + rodada × indicador_casa "
-        "+ força adversário + turno"
+        "+ força adversário + turno + forma recente (últimos 5 jogos)"
     ),
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)

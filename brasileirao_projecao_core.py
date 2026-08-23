@@ -17,6 +17,8 @@ VarianteRegressao = Literal[
     "interacao_adv_turno",
 ]
 
+FORMA_RECENTE_JOGOS = 5
+
 _DIR_APP = Path(__file__).resolve().parent
 ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
 
@@ -195,32 +197,93 @@ def mapa_forca_adversario(
     }
 
 
+def _historico_pts_time(jogos: list[Jogo], time: str) -> list[tuple[int, str, float]]:
+    """Jogos realizados do time, ordenados por (rodada, hora)."""
+    hist: list[tuple[int, str, float]] = []
+    for j in jogos:
+        if not j.jogado:
+            continue
+        pts_pair = j.pts_reais()
+        if pts_pair is None:
+            continue
+        pm, pv = pts_pair
+        if j.mand == time:
+            hist.append((j.r, j.hora, float(pm)))
+        elif j.vis == time:
+            hist.append((j.r, j.hora, float(pv)))
+    hist.sort(key=lambda x: (x[0], x[1]))
+    return hist
+
+
+def forma_recente_ate(
+    jogos: list[Jogo],
+    time: str,
+    rodada: int,
+    hora: str = "",
+    *,
+    n: int = FORMA_RECENTE_JOGOS,
+    padrao: float = 1.0,
+) -> float:
+    """Média de pts nos últimos n jogos antes de (rodada, hora)."""
+    anteriores: list[float] = []
+    for r, h, pts in _historico_pts_time(jogos, time):
+        if r < rodada or (r == rodada and h < hora):
+            anteriores.append(pts)
+    if not anteriores:
+        return padrao
+    return sum(anteriores[-n:]) / len(anteriores[-n:])
+
+
+def forma_recente_atual(
+    jogos: list[Jogo],
+    time: str,
+    *,
+    n: int = FORMA_RECENTE_JOGOS,
+    padrao: float = 1.0,
+) -> float:
+    """Média de pts nos últimos n jogos realizados (para projeção)."""
+    hist = _historico_pts_time(jogos, time)
+    if not hist:
+        return padrao
+    ultimos = [pts for _, _, pts in hist[-n:]]
+    return sum(ultimos) / len(ultimos)
+
+
 def _coletar_obs_regressao(
     jogos: list[Jogo],
     time: str,
     r_ini: int,
     r_fim: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str], np.ndarray]:
     rodadas: list[float] = []
     casa: list[float] = []
     turno: list[float] = []
     y_vals: list[float] = []
     adversarios: list[str] = []
+    formas: list[float] = []
 
-    for j in jogos:
-        if not j.jogado or j.r < r_ini or j.r > r_fim:
-            continue
+    jogos_time = [
+        j
+        for j in jogos
+        if j.jogado
+        and r_ini <= j.r <= r_fim
+        and (j.mand == time or j.vis == time)
+    ]
+    jogos_time.sort(key=lambda x: (x.r, x.hora))
+
+    for j in jogos_time:
         parsed = parse_placar(j.placar)
         if parsed is None:
             continue
         gm, gv = parsed
+        formas.append(forma_recente_ate(jogos, time, j.r, j.hora))
         if j.mand == time:
             rodadas.append(float(j.r))
             casa.append(1.0)
             turno.append(1.0 if j.r >= 20 else 0.0)
             adversarios.append(j.vis)
             y_vals.append(float(pontos_placar(gm, gv)[0]))
-        elif j.vis == time:
+        else:
             rodadas.append(float(j.r))
             casa.append(0.0)
             turno.append(1.0 if j.r >= 20 else 0.0)
@@ -233,6 +296,7 @@ def _coletar_obs_regressao(
         np.array(turno, dtype=float),
         np.array(y_vals, dtype=float),
         adversarios,
+        np.array(formas, dtype=float),
     )
 
 
@@ -244,20 +308,29 @@ def _ajustar_regressao(
     adversarios: list[str],
     forca_map: dict[str, float],
     variante: VarianteRegressao,
+    forma: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Ajusta OLS conforme a variante selecionada."""
     usa_interacao = variante != "casa_sem_interacao"
     usa_forca = variante == "interacao_adv_turno"
     usa_turno = variante == "interacao_adv_turno"
+    usa_forma = variante == "interacao_adv_turno"
 
     n = len(y)
     if n == 0:
         return _coeficientes_vazios(variante, 1.0)
 
     r = rodadas.astype(float)
+    forma_arr = forma.astype(float) if forma is not None and len(forma) == n else None
     b0_g, b1_g = _ols_pts_rodada(r, y)
 
-    def _montar(interacao: bool, forca: bool, turno_flag: bool, casa_flag: bool):
+    def _montar(
+        interacao: bool,
+        forca: bool,
+        turno_flag: bool,
+        forma_flag: bool,
+        casa_flag: bool,
+    ):
         cols = [np.ones(n), r]
         if casa_flag:
             cols.append(casa.astype(float))
@@ -269,13 +342,22 @@ def _ajustar_regressao(
             )
         if turno_flag:
             cols.append(turno.astype(float))
+        if forma_flag and forma_arr is not None:
+            cols.append(forma_arr)
         return cols
 
-    def _extrair(coef: np.ndarray, interacao: bool, forca: bool, turno_flag: bool, casa_flag: bool):
+    def _extrair(
+        coef: np.ndarray,
+        interacao: bool,
+        forca: bool,
+        turno_flag: bool,
+        forma_flag: bool,
+        casa_flag: bool,
+    ):
         idx = 0
         b0 = float(coef[idx]); idx += 1
         b1 = float(coef[idx]); idx += 1
-        b2 = b3 = b4 = b5 = 0.0
+        b2 = b3 = b4 = b5 = b6 = 0.0
         if casa_flag:
             b2 = float(coef[idx]); idx += 1
         if interacao:
@@ -283,30 +365,39 @@ def _ajustar_regressao(
         if forca:
             b4 = float(coef[idx]); idx += 1
         if turno_flag:
-            b5 = float(coef[idx])
-        return b0, b1, b2, b3, b4, b5
+            b5 = float(coef[idx]); idx += 1
+        if forma_flag:
+            b6 = float(coef[idx])
+        return b0, b1, b2, b3, b4, b5, b6
 
     tentativas = [
-        (usa_interacao, usa_forca, usa_turno, True),
-        (usa_interacao, False, usa_turno, True),
-        (usa_interacao, False, False, True),
-        (False, False, False, True),
-        (False, False, False, False),
+        (usa_interacao, usa_forca, usa_turno, usa_forma, True),
+        (usa_interacao, usa_forca, usa_turno, False, True),
+        (usa_interacao, False, usa_turno, False, True),
+        (usa_interacao, False, False, False, True),
+        (False, False, False, False, True),
+        (False, False, False, False, False),
     ]
-    seen: set[tuple[bool, bool, bool, bool]] = set()
-    b0, b1, b2, b3, b4, b5 = b0_g, b1_g, 0.0, 0.0, 0.0, 0.0
-    fit_interacao = fit_forca = fit_turno = fit_casa = usa_interacao
-    for interacao, forca, turno_flag, casa_flag in tentativas:
-        key = (interacao, forca, turno_flag, casa_flag)
+    seen: set[tuple[bool, bool, bool, bool, bool]] = set()
+    b0, b1, b2, b3, b4, b5, b6 = b0_g, b1_g, 0.0, 0.0, 0.0, 0.0, 0.0
+    fit_interacao = fit_forca = fit_turno = fit_forma = fit_casa = usa_interacao
+    for interacao, forca, turno_flag, forma_flag, casa_flag in tentativas:
+        key = (interacao, forca, turno_flag, forma_flag, casa_flag)
         if key in seen:
             continue
         seen.add(key)
-        cols = _montar(interacao, forca, turno_flag, casa_flag)
+        cols = _montar(interacao, forca, turno_flag, forma_flag, casa_flag)
         if n < len(cols):
             continue
         coef, _, _, _ = np.linalg.lstsq(np.column_stack(cols), y.astype(float), rcond=None)
-        b0, b1, b2, b3, b4, b5 = _extrair(coef, interacao, forca, turno_flag, casa_flag)
-        fit_interacao, fit_forca, fit_turno, fit_casa = interacao, forca, turno_flag, casa_flag
+        b0, b1, b2, b3, b4, b5, b6 = _extrair(
+            coef, interacao, forca, turno_flag, forma_flag, casa_flag
+        )
+        fit_interacao = interacao
+        fit_forca = forca
+        fit_turno = turno_flag
+        fit_forma = forma_flag
+        fit_casa = casa_flag
         break
 
     return {
@@ -319,11 +410,13 @@ def _ajustar_regressao(
         "beta_interacao": b3 if fit_interacao else 0.0,
         "beta_forca": b4 if fit_forca else 0.0,
         "beta_turno": b5 if fit_turno else 0.0,
+        "beta_forma": b6 if fit_forma else 0.0,
         "variante": variante,
         "usa_casa": fit_casa,
         "usa_interacao": fit_interacao,
         "usa_forca": fit_forca,
         "usa_turno": fit_turno,
+        "usa_forma": fit_forma,
     }
 
 
@@ -341,11 +434,13 @@ def _coeficientes_vazios(
         "beta_interacao": 0.0,
         "beta_forca": 0.0,
         "beta_turno": 0.0,
+        "beta_forma": 0.0,
         "variante": variante,
         "usa_casa": variante != "casa_sem_interacao",
         "usa_interacao": variante != "casa_sem_interacao",
         "usa_forca": variante == "interacao_adv_turno",
         "usa_turno": variante == "interacao_adv_turno",
+        "usa_forma": variante == "interacao_adv_turno",
     }
 
 
@@ -368,6 +463,8 @@ def _prever_regressao(
         val += b.get("beta_forca", 0.0) * forca_map.get(adversario, 1.0)
     if b.get("usa_turno"):
         val += b.get("beta_turno", 0.0) * (1.0 if rodada >= 20 else 0.0)
+    if b.get("usa_forma"):
+        val += b.get("beta_forma", 0.0) * b.get("forma_recente", 1.0)
     return max(val, 0.0)
 
 
@@ -380,12 +477,15 @@ def regressao_beta(
     forca_map: dict[str, float],
 ) -> dict[str, float]:
     """Coeficientes de regressão por jogo conforme variante."""
-    rodadas, casa, turno, y, adversarios = _coletar_obs_regressao(
+    rodadas, casa, turno, y, adversarios, formas = _coletar_obs_regressao(
         jogos, time, r_ini, r_fim
     )
-    return _ajustar_regressao(
-        rodadas, casa, turno, y, adversarios, forca_map, variante
+    coefs = _ajustar_regressao(
+        rodadas, casa, turno, y, adversarios, forca_map, variante, formas
     )
+    if variante == "interacao_adv_turno":
+        coefs["forma_recente"] = forma_recente_atual(jogos, time)
+    return coefs
 
 
 def media_pts_jogo(
@@ -1361,6 +1461,171 @@ def fig_estatisticas_times(
         showgrid=True,
         gridcolor="rgba(15, 23, 42, 0.08)",
         zeroline=False,
+    )
+    return fig
+
+
+def estatisticas_por_rodada(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+) -> pd.DataFrame:
+    """Métricas acumuladas e da rodada para cada time (realizados)."""
+    times = times_do_calendario(jogos)
+    pos_por_r: dict[int, dict[str, int]] = {}
+
+    for r in range(r_ini, r_fim + 1):
+        stats_r = {
+            t: stats_acumuladas_ate(jogos, t, r, so_realizados=True) for t in times
+        }
+        ordem = ordenar_stats_desempate(
+            jogos, stats_r, incluir_proj=False, ate_rodada=r
+        )
+        pos_por_r[r] = {t: i for i, (t, _) in enumerate(ordem, 1)}
+
+    rows: list[dict] = []
+    for time in times:
+        for r in range(r_ini, r_fim + 1):
+            acum = stats_acumuladas_ate(jogos, time, r, so_realizados=True)
+            rod = _stats_rodada_time(jogos, time, r)
+            rows.append(
+                {
+                    "Time": time,
+                    "Rodada": r,
+                    "Pontos acumulados": acum.pts,
+                    "Gols marcados (acum.)": acum.gf,
+                    "Gols sofridos (acum.)": acum.gc,
+                    "Saldo de gols (acum.)": acum.sg,
+                    "Vitórias (acum.)": acum.vit,
+                    "Posição": pos_por_r[r].get(time, len(times)),
+                    "Pontos na rodada": rod.pts,
+                    "Gols marcados na rodada": rod.gf,
+                    "Gols sofridos na rodada": rod.gc,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def colunas_estatisticas_rodada_grafico(df: pd.DataFrame) -> list[str]:
+    return [
+        c
+        for c in df.columns
+        if c not in ("Time", "Rodada") and pd.api.types.is_numeric_dtype(df[c])
+    ]
+
+
+def fig_estatisticas_por_rodada(
+    df: pd.DataFrame,
+    times: list[str],
+    colunas: list[str],
+):
+    """Linhas por rodada: um painel por estatística, uma linha por time."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    palette = [
+        "#14532d",
+        "#15803d",
+        "#ca8a04",
+        "#0f766e",
+        "#b45309",
+        "#166534",
+        "#047857",
+        "#854d0e",
+    ]
+    sub = df[df["Time"].isin(times)].copy()
+    if sub.empty or not colunas:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Selecione times e estatísticas",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        return fig
+
+    ordem_times = [t for t in times if t in sub["Time"].unique()]
+    n_met = len(colunas)
+
+    if n_met == 1:
+        fig = go.Figure()
+        col = colunas[0]
+        for ti, time in enumerate(ordem_times):
+            s = sub[sub["Time"] == time].sort_values("Rodada")
+            fig.add_trace(
+                go.Scatter(
+                    x=s["Rodada"],
+                    y=s[col],
+                    mode="lines+markers",
+                    name=time,
+                    line=dict(color=palette[ti % len(palette)], width=2.5),
+                    marker=dict(size=5),
+                    hovertemplate=(
+                        f"{time}<br>Rodada %{{x}}<br>{col}: %{{y}}<extra></extra>"
+                    ),
+                )
+            )
+        fig.update_layout(
+            title=f"Evolução rodada a rodada — {col}",
+            xaxis_title="Rodada",
+            yaxis_title=col,
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            height=480,
+            margin=dict(t=80),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Inter, sans-serif", color="#0f172a"),
+        )
+        fig.update_xaxes(dtick=1, showgrid=True, gridcolor="rgba(15, 23, 42, 0.08)")
+        fig.update_yaxes(
+            showgrid=True, gridcolor="rgba(15, 23, 42, 0.08)", zeroline=False
+        )
+        return fig
+
+    fig = make_subplots(
+        rows=n_met,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=colunas,
+    )
+    for mi, col in enumerate(colunas):
+        for ti, time in enumerate(ordem_times):
+            s = sub[sub["Time"] == time].sort_values("Rodada")
+            fig.add_trace(
+                go.Scatter(
+                    x=s["Rodada"],
+                    y=s[col],
+                    mode="lines+markers",
+                    name=time,
+                    line=dict(color=palette[ti % len(palette)], width=2),
+                    marker=dict(size=4),
+                    legendgroup=time,
+                    showlegend=(mi == 0),
+                    hovertemplate=(
+                        f"{time}<br>Rodada %{{x}}<br>{col}: %{{y}}<extra></extra>"
+                    ),
+                ),
+                row=mi + 1,
+                col=1,
+            )
+        fig.update_yaxes(
+            title_text=col, row=mi + 1, col=1, gridcolor="rgba(15, 23, 42, 0.08)"
+        )
+
+    altura = max(480, 180 * n_met + 120)
+    fig.update_layout(
+        title="Evolução rodada a rodada",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        height=altura,
+        margin=dict(t=90),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, sans-serif", color="#0f172a"),
+    )
+    fig.update_xaxes(
+        dtick=1, showgrid=True, gridcolor="rgba(15, 23, 42, 0.08)", row=n_met, col=1
     )
     return fig
 
