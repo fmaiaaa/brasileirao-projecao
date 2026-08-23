@@ -192,12 +192,12 @@ r_fim_proj = int(min(_ult_r, 38))
 
 _MODO_ACUM_SIMPLES = (
     "Regressão acumulada + simples: "
-    "pts_acumulados ~ rodada + rodada² (pts decimais por jogo)"
+    "pts_acumulados ~ rodada + indicador_casa + rodada × indicador_casa"
 )
 _MODO_ACUM_ROBUSTA = (
     "Regressão acumulada + robusta: "
-    "pts_acumulados ~ rodada + rodada² + força adversário "
-    "+ forma recente (últimos 5 jogos; pts decimais por jogo)"
+    "pts_acumulados ~ rodada + rodada² + proporção_casa "
+    "+ força oponentes passados (atualizada rodada a rodada)"
 )
 _MODO_MEDIA = (
     "Média casa x fora × forma recente "

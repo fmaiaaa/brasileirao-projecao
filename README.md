@@ -29,8 +29,8 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 
 Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arredondar para 3/1/0.
 
-1. **Regressão acumulada + simples:** pts acumulados por rodada — `pts_acumulados ~ rodada + rodada²`
-2. **Regressão acumulada + robusta:** pts acumulados — `pts_acumulados ~ rodada + rodada² + força adversário + forma recente (últimos 5 jogos)`
+1. **Regressão acumulada + simples:** `pts_acumulados ~ rodada + indicador_casa + rodada × indicador_casa`
+2. **Regressão acumulada + robusta:** `pts_acumulados ~ rodada + rodada² + proporção_casa + força oponentes passados` (força recalculada após cada rodada projetada)
 3. **Média casa x fora × forma recente** — `média casa ou fora × (média últimos 5 / média campeonato)`
 4. **Repetir 1 turno** — espelha ida/volta já disputada; fallback pela média × forma recente
 
