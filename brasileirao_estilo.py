@@ -115,6 +115,16 @@ def aplicar_estilo() -> None:
             color: {COR_TEXTO_MUTED} !important;
         }}
         .ficha-hero-stack {{ width: 100%; margin-bottom: 0.5rem; }}
+        .ficha-hero-logo-wrap {{
+            text-align: center;
+            margin: 0 auto 0.65rem auto;
+            max-width: 140px;
+        }}
+        .ficha-hero-logo-wrap img {{
+            width: 100%;
+            height: auto;
+            display: inline-block;
+        }}
         .ficha-hero {{ text-align: center; max-width: 720px; margin: 0 auto; }}
         .ficha-hero .ficha-title {{
             font-family: 'Montserrat', sans-serif;
@@ -270,13 +280,24 @@ def aplicar_estilo() -> None:
 
 
 def cabecalho_pagina(titulo: str, subtitulo: str | None = None) -> None:
+    import base64
+    from pathlib import Path
+
     import streamlit as st
 
-    partes = [
-        '<div class="ficha-hero-stack">',
+    logo = Path(__file__).resolve().parent / "R.png"
+    partes = ['<div class="ficha-hero-stack">']
+    if logo.is_file():
+        b64 = base64.b64encode(logo.read_bytes()).decode()
+        partes.append(
+            '<div class="ficha-hero-logo-wrap">'
+            f'<img src="data:image/png;base64,{b64}" alt="Brasileirão" />'
+            "</div>"
+        )
+    partes.extend([
         '<div class="ficha-hero">',
         f'<p class="ficha-title">{titulo}</p>',
-    ]
+    ])
     if subtitulo:
         partes.append(f'<p class="ficha-sub">{subtitulo}</p>')
     partes.append("</div>")
