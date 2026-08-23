@@ -193,24 +193,16 @@ r_ini_proj = 1
 r_fim_proj = int(min(_ult_r, 38))
 
 _MODO_MOMENTO_ACELERACAO = (
-    "Regressão de Momento e Aceleração — "
-    "Pontos Acumulados (PA) ~ Rodada (R) + Rodada² (R²) + Forma Recente (FR)"
+    "Regressão de Momento e Aceleração (FE) — "
+    "PA ~ αᵢ + R + R² + (R×Time) + (R²×Time) + FR"
 )
 _MODO_MOMENTO_HISTORICO = (
-    "Regressão de Momento e Histórico — "
-    "Pontos Acumulados (PA) ~ Rodada (R) + Proporção Casa (PC) + "
-    "Força dos Adversários Passados (FAP)"
+    "Regressão de Momento e Histórico (FE) — "
+    "PA ~ αᵢ + R + (R×Time) + (R²×Time) + PC + FAP"
 )
 _MODO_COMPLETA = (
-    "Regressão Completa — "
-    "Pontos Acumulados (PA) ~ Rodada (R) + Rodada² (R²) + Forma Recente (FR) + "
-    "Força dos Adversários Passados (FAP) + Proporção Casa (PC)"
-)
-_MODO_EFEITOS_FIXOS = (
-    "Regressão de Efeitos Fixos — "
-    "Pontos Acumulados (PA) ~ αᵢ + Rodada (R) + Rodada² (R²) + "
-    "(R×Time) + (R²×Time) + Forma Recente (FR) + "
-    "Força dos Adversários Passados (FAP) + Proporção Casa (PC)"
+    "Regressão Completa (FE) — "
+    "PA ~ αᵢ + R + R² + (R×Time) + (R²×Time) + FR + FAP + PC"
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
 _MODO_MEDIA_CASA_FORA = "Média casa x fora"
@@ -220,7 +212,6 @@ _modo_opcoes = [
     _MODO_MOMENTO_ACELERACAO,
     _MODO_MOMENTO_HISTORICO,
     _MODO_COMPLETA,
-    _MODO_EFEITOS_FIXOS,
     _MODO_MEDIA,
     _MODO_MEDIA_CASA_FORA,
     _MODO_TURNO,
@@ -240,9 +231,6 @@ elif modo_label.startswith("Regressão de Momento e Aceleração"):
 elif modo_label.startswith("Regressão Completa"):
     modo = "regressao_completa"
     variante_acum = "completa"
-elif modo_label.startswith("Regressão de Efeitos Fixos"):
-    modo = "regressao_efeitos_fixos"
-    variante_acum = "efeitos_fixos"
 elif modo_label == _MODO_MEDIA:
     modo = "media_simples"
 elif modo_label == _MODO_MEDIA_CASA_FORA:
@@ -255,19 +243,12 @@ else:
 
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
-        caption = (
-            "Curva de pontos acumulados por rodada; cada jogo recebe o delta "
-            "decimal da curva. Significância: "
-            "*** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
+        st.caption(
+            "Modelo de efeitos fixos (αᵢ) com interações Rodada×Time e "
+            "Rodada²×Time (γᵢ; time de referência com γ=0). "
+            "Curva de PA por rodada; cada jogo recebe o delta decimal. "
+            "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
-        if variante_acum == "efeitos_fixos":
-            caption = (
-                "Painel com efeito fixo por time (αᵢ), tendências comuns (R, R²) "
-                "e interações Rodada×Time / Rodada²×Time (γᵢ; time de referência "
-                "com γ=0). Controles comuns: FR, FAP e PC. "
-                "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
-            )
-        st.caption(caption)
         st.dataframe(
             tabela_regressao_acumulada_resumo(
                 _jogos_base, r_ini_proj, r_fim_proj, variante_acum
