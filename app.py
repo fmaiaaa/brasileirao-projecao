@@ -27,6 +27,9 @@ from brasileirao_projecao_core import (
     kpis_globais,
     mapa_posicao_pontos,
     mapa_vitorias_saldo_proj,
+    tabela_regressao_resumo,
+    tabela_medias_simples_times,
+    tabela_jogos_primeiro_turno,
     tabela_comparativa_posicoes,
     tabela_estatisticas_times,
     times_do_calendario,
@@ -194,7 +197,7 @@ _MODO_SIMPLES = (
 _MODO_ROBUSTA = (
     "Regressão linear + robusta: "
     "pts ~ rodada + rodada² + indicador_casa + rodada × indicador_casa "
-    "+ força adversário (média pts/jogo do oponente no intervalo) + turno "
+    "+ força adversário (média pts/jogo do oponente no intervalo) "
     "+ forma recente (últimos 5 jogos)"
 )
 _MODO_MEDIA = "Média simples casa x fora"
@@ -221,6 +224,39 @@ else:
     modo = "regressao"
     tipo = "mandante_visitante"
     variante = "interacao"
+
+with st.expander("Detalhes do modelo"):
+    if modo == "regressao":
+        st.caption(
+            "Significância dos termos: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
+        )
+        st.dataframe(
+            tabela_regressao_resumo(
+                _jogos_base, r_ini_proj, r_fim_proj, variante
+            ),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Time": st.column_config.TextColumn("Time", pinned="left"),
+                "R²": st.column_config.NumberColumn("R²", format="%.3f"),
+            },
+        )
+    elif modo == "media_simples":
+        st.dataframe(
+            tabela_medias_simples_times(_jogos_base, r_ini_proj, r_fim_proj),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Time": st.column_config.TextColumn("Time", pinned="left"),
+            },
+        )
+    else:
+        st.caption("Jogos do 1º turno (rodadas 1–19) usados como referência para espelhar a volta.")
+        st.dataframe(
+            tabela_jogos_primeiro_turno(_jogos_base),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 jogos_proj, df_log = aplicar_projecoes(
     _jogos_base, modo, r_ini_proj, r_fim_proj, tipo, variante_reg=variante

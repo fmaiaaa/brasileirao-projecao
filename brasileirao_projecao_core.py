@@ -18,6 +18,7 @@ VarianteRegressao = Literal[
 ]
 
 FORMA_RECENTE_JOGOS = 5
+RODADA_FIM_PRIMEIRO_TURNO = 19
 
 _DIR_APP = Path(__file__).resolve().parent
 ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
@@ -187,6 +188,93 @@ def _ols_pts_rodada(rodadas: np.ndarray, pts: np.ndarray) -> tuple[float, float]
     return float(coef[0]), float(coef[1])
 
 
+def _pvalor_t_bilateral(t_stat: float, df: int) -> float:
+    """p-valor bilateral da estatística t de Student."""
+    if df <= 0 or not np.isfinite(t_stat):
+        return float("nan")
+    from scipy.stats import t as student_t
+
+    return float(2.0 * student_t.sf(abs(t_stat), df))
+
+
+def _ols_pvalues(X: np.ndarray, y: np.ndarray, coef: np.ndarray) -> list[float]:
+    n, k = X.shape
+    if n <= k:
+        return [float("nan")] * k
+    resid = y.astype(float) - X @ coef
+    rss = float(np.sum(resid ** 2))
+    sigma2 = rss / (n - k)
+    try:
+        cov = sigma2 * np.linalg.inv(X.T @ X)
+    except np.linalg.LinAlgError:
+        cov = sigma2 * np.linalg.pinv(X.T @ X)
+    se = np.sqrt(np.maximum(np.diag(cov), 0.0))
+    df = n - k
+    return [_pvalor_t_bilateral(float(c / s) if s > 0 else float("nan"), df) for c, s in zip(coef, se)]
+
+
+def _ols_r2(X: np.ndarray, y: np.ndarray, coef: np.ndarray) -> float:
+    y = y.astype(float)
+    y_hat = X @ coef
+    ss_res = float(np.sum((y - y_hat) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    if ss_tot <= 0:
+        return float("nan")
+    return 1.0 - ss_res / ss_tot
+
+
+def pvalor_estrela(p: float | None) -> str:
+    """Converte p-valor em marcador de significância."""
+    if p is None or not np.isfinite(p):
+        return "-"
+    if p < 0.001:
+        return "***"
+    if p < 0.01:
+        return "**"
+    if p < 0.05:
+        return "*"
+    return "-"
+
+
+def _ordem_variaveis_regressao(variante: VarianteRegressao) -> list[str]:
+    cols = ["Intercepto", "Rodada", "Indicador casa", "Rodada × casa"]
+    if variante == "interacao_adv_turno":
+        return [
+            "Intercepto",
+            "Rodada",
+            "Rodada²",
+            "Indicador casa",
+            "Rodada × casa",
+            "Força adversário",
+            "Forma recente",
+        ]
+    return cols
+
+
+def _nomes_termos_regressao(
+    interacao: bool,
+    forca: bool,
+    turno_flag: bool,
+    forma_flag: bool,
+    rodada2_flag: bool,
+    casa_flag: bool,
+) -> list[str]:
+    nomes = ["Intercepto", "Rodada"]
+    if rodada2_flag:
+        nomes.append("Rodada²")
+    if casa_flag:
+        nomes.append("Indicador casa")
+    if interacao:
+        nomes.append("Rodada × casa")
+    if forca:
+        nomes.append("Força adversário")
+    if turno_flag:
+        nomes.append("Turno")
+    if forma_flag:
+        nomes.append("Forma recente")
+    return nomes
+
+
 def mapa_forca_adversario(
     jogos: list[Jogo], r_ini: int, r_fim: int
 ) -> dict[str, float]:
@@ -313,7 +401,7 @@ def _ajustar_regressao(
     """Ajusta OLS conforme a variante selecionada."""
     usa_interacao = variante != "casa_sem_interacao"
     usa_forca = variante == "interacao_adv_turno"
-    usa_turno = variante == "interacao_adv_turno"
+    usa_turno = False
     usa_forma = variante == "interacao_adv_turno"
     usa_rodada2 = variante == "interacao_adv_turno"
 
@@ -389,6 +477,8 @@ def _ajustar_regressao(
     seen: set[tuple[bool, bool, bool, bool, bool, bool]] = set()
     b0, b1, b_r2, b2, b3, b4, b5, b6 = b0_g, b1_g, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     fit_interacao = fit_forca = fit_turno = fit_forma = fit_rodada2 = fit_casa = usa_interacao
+    termos: list[dict[str, float | str]] = []
+    r2 = float("nan")
     for interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag in tentativas:
         key = (interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag)
         if key in seen:
@@ -397,7 +487,21 @@ def _ajustar_regressao(
         cols = _montar(interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag)
         if n < len(cols):
             continue
-        coef, _, _, _ = np.linalg.lstsq(np.column_stack(cols), y.astype(float), rcond=None)
+        X = np.column_stack(cols)
+        coef, _, _, _ = np.linalg.lstsq(X, y.astype(float), rcond=None)
+        pvals = _ols_pvalues(X, y.astype(float), coef)
+        nomes = _nomes_termos_regressao(
+            interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag
+        )
+        termos = [
+            {
+                "Variável": nomes[i],
+                "Beta": round(float(coef[i]), 4),
+                "p-valor": round(float(pvals[i]), 4) if np.isfinite(pvals[i]) else None,
+            }
+            for i in range(len(nomes))
+        ]
+        r2 = _ols_r2(X, y.astype(float), coef)
         b0, b1, b_r2, b2, b3, b4, b5, b6 = _extrair(
             coef, interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag
         )
@@ -428,6 +532,9 @@ def _ajustar_regressao(
         "usa_turno": fit_turno,
         "usa_forma": fit_forma,
         "usa_rodada2": fit_rodada2,
+        "termos": termos,
+        "n_obs": n,
+        "r2": round(r2, 4) if termos and np.isfinite(r2) else None,
     }
 
 
@@ -451,9 +558,12 @@ def _coeficientes_vazios(
         "usa_casa": variante != "casa_sem_interacao",
         "usa_interacao": variante != "casa_sem_interacao",
         "usa_forca": variante == "interacao_adv_turno",
-        "usa_turno": variante == "interacao_adv_turno",
+        "usa_turno": False,
         "usa_forma": variante == "interacao_adv_turno",
         "usa_rodada2": variante == "interacao_adv_turno",
+        "termos": [],
+        "n_obs": 0,
+        "r2": None,
     }
 
 
@@ -802,6 +912,95 @@ def tabela_betas(
             row[col_fora] = round(b.get("fora", b["geral"]), 3)
         rows.append(row)
     return pd.DataFrame(rows).sort_values(col_main, ascending=False)
+
+
+def tabela_regressao_resumo(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+    variante: VarianteRegressao,
+) -> pd.DataFrame:
+    """R² e significância (estrelas) de cada termo, por time."""
+    forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
+    ordem = _ordem_variaveis_regressao(variante)
+    rows: list[dict] = []
+    for t in times_do_calendario(jogos):
+        b = regressao_beta(jogos, t, r_ini, r_fim, variante, forca_map)
+        row: dict = {"Time": t, "R²": b.get("r2")}
+        sig = {termo["Variável"]: pvalor_estrela(termo.get("p-valor")) for termo in b.get("termos", [])}
+        for var in ordem:
+            row[var] = sig.get(var, "-")
+        rows.append(row)
+    cols = ["Time", "R²", *ordem]
+    return pd.DataFrame(rows, columns=cols)
+
+
+def tabela_medias_simples_times(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+) -> pd.DataFrame:
+    """Médias de pts/jogo (geral, casa e fora) por time no intervalo."""
+    rows: list[dict] = []
+    for t in times_do_calendario(jogos):
+        m = media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante")
+        rows.append(
+            {
+                "Time": t,
+                "Média pts/jogo (geral)": round(m["geral"], 3),
+                "Média pts/jogo (casa)": round(m.get("casa", m["geral"]), 3),
+                "Média pts/jogo (fora)": round(m.get("fora", m["geral"]), 3),
+            }
+        )
+    return pd.DataFrame(rows).sort_values("Time")
+
+
+def tabela_jogos_primeiro_turno(jogos: list[Jogo]) -> pd.DataFrame:
+    """Todos os jogos do 1º turno (rodadas 1–19)."""
+    rows: list[dict] = []
+    for j in sorted(jogos, key=lambda x: (x.r, x.hora, x.mand)):
+        if j.r > RODADA_FIM_PRIMEIRO_TURNO:
+            continue
+        rows.append(
+            {
+                "Rodada": j.r,
+                "Data": j.data,
+                "Hora": j.hora,
+                "Mandante": j.mand,
+                "Placar": j.placar if j.jogado else "-",
+                "Visitante": j.vis,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def tabela_coeficientes_regressao(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+    variante: VarianteRegressao,
+) -> pd.DataFrame:
+    """Beta e p-valor de cada termo da regressão, por time."""
+    forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
+    rows: list[dict] = []
+    for t in times_do_calendario(jogos):
+        b = regressao_beta(jogos, t, r_ini, r_fim, variante, forca_map)
+        n_obs = int(b.get("n_obs", 0))
+        for termo in b.get("termos", []):
+            rows.append(
+                {
+                    "Time": t,
+                    "Variável": termo["Variável"],
+                    "Beta": termo["Beta"],
+                    "p-valor": termo["p-valor"],
+                    "N obs.": n_obs,
+                }
+            )
+    if not rows:
+        return pd.DataFrame(
+            columns=["Time", "Variável", "Beta", "p-valor", "N obs."]
+        )
+    return pd.DataFrame(rows)
 
 
 def kpis_globais(jogos: list[Jogo]) -> dict[str, float]:
