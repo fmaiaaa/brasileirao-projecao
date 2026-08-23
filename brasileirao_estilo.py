@@ -118,12 +118,13 @@ def aplicar_estilo() -> None:
         .ficha-hero-logo-wrap {{
             text-align: center;
             margin: 0 auto 0.65rem auto;
-            max-width: 140px;
+            max-width: 160px;
         }}
         .ficha-hero-logo-wrap img {{
             width: 100%;
             height: auto;
             display: inline-block;
+            filter: drop-shadow(0 2px 6px rgba(15, 23, 42, 0.12));
         }}
         .ficha-hero {{ text-align: center; max-width: 720px; margin: 0 auto; }}
         .ficha-hero .ficha-title {{
@@ -279,16 +280,44 @@ def aplicar_estilo() -> None:
     )
 
 
-def cabecalho_pagina(titulo: str, subtitulo: str | None = None) -> None:
+def _logo_brasileirao_base64() -> str | None:
+    """Remove fundo claro/neutro de R.png e retorna PNG em base64."""
     import base64
+    import io
+    from functools import lru_cache
     from pathlib import Path
 
+    import numpy as np
+    from PIL import Image
+
+    @lru_cache(maxsize=1)
+    def _processar() -> str | None:
+        logo = Path(__file__).resolve().parent / "R.png"
+        if not logo.is_file():
+            return None
+
+        img = Image.open(logo).convert("RGBA")
+        data = np.array(img, dtype=np.float32)
+        r, g, b = data[:, :, 0], data[:, :, 1], data[:, :, 2]
+        chroma = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+        lum = (r + g + b) / 3.0
+        # Fundo cinza/branco (inclui padrão xadrez embutido na imagem)
+        fundo = (lum > 210) & (chroma < 25)
+        data[:, :, 3] = np.where(fundo, 0.0, 255.0)
+
+        buf = io.BytesIO()
+        Image.fromarray(data.astype(np.uint8), mode="RGBA").save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+
+    return _processar()
+
+
+def cabecalho_pagina(titulo: str, subtitulo: str | None = None) -> None:
     import streamlit as st
 
-    logo = Path(__file__).resolve().parent / "R.png"
     partes = ['<div class="ficha-hero-stack">']
-    if logo.is_file():
-        b64 = base64.b64encode(logo.read_bytes()).decode()
+    b64 = _logo_brasileirao_base64()
+    if b64:
         partes.append(
             '<div class="ficha-hero-logo-wrap">'
             f'<img src="data:image/png;base64,{b64}" alt="Brasileirão" />'
