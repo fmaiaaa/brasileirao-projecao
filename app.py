@@ -56,29 +56,51 @@ with st.expander("Configuração da projeção", expanded=True):
             "Modo de projeção",
             options=[
                 "Regressão linear (betas por rodada)",
+                "Média simples (pts por jogo/rodada)",
                 "Repetir 1º turno (só jogos faltantes)",
             ],
             index=0,
         )
-        modo: ModoProjecao = "regressao" if "Regressão" in modo_label else "repetir_turno"
+        if "Regressão" in modo_label:
+            modo: ModoProjecao = "regressao"
+        elif "Média" in modo_label:
+            modo = "media_simples"
+        else:
+            modo = "repetir_turno"
     with c2:
         tipo_label = st.radio(
-            "Tipo de regressão",
+            "Efeito mando de campo",
             options=[
-                "Simples (pts/rodada único)",
-                "Mandante × Visitante (betas casa/fora)",
+                "Simples (único para casa e fora)",
+                "Mandante × Visitante (casa/fora separados)",
             ],
             index=0,
-            help="No modo espelho, usado como fallback quando não há ida/volta.",
+            help="Vale para regressão e média simples; também no fallback do modo espelho.",
         )
         tipo: TipoRegressao = (
             "mandante_visitante" if "Mandante" in tipo_label else "simples"
         )
 
+    if modo == "repetir_turno":
+        fb_label = st.radio(
+            "Fallback quando não há jogo espelhado",
+            options=[
+                "Regressão linear",
+                "Média simples",
+            ],
+            index=0,
+            horizontal=True,
+        )
+        modo_fallback: ModoProjecao = (
+            "media_simples" if "Média" in fb_label else "regressao"
+        )
+    else:
+        modo_fallback = "regressao"
+
     c3, c4 = st.columns(2)
     with c3:
         r_ini = st.number_input(
-            "Rodada início (betas)",
+            "Rodada início (janela)",
             min_value=1,
             max_value=38,
             value=1,
@@ -86,7 +108,7 @@ with st.expander("Configuração da projeção", expanded=True):
         )
     with c4:
         r_fim = st.number_input(
-            "Rodada fim (betas)",
+            "Rodada fim (janela)",
             min_value=1,
             max_value=38,
             value=int(min(_ult_r, 38)),
@@ -96,10 +118,19 @@ with st.expander("Configuração da projeção", expanded=True):
         st.warning("Rodada fim menor que início — usando fim = início.")
         r_fim = r_ini
 
-jogos_proj, df_log = aplicar_projecoes(_jogos_base, modo, int(r_ini), int(r_fim), tipo)
+modo_metrica_ui: ModoProjecao = (
+    modo if modo != "repetir_turno" else modo_fallback
+)
+jogos_proj, df_log = aplicar_projecoes(
+    _jogos_base, modo, int(r_ini), int(r_fim), tipo, modo_fallback=modo_fallback
+)
 
-with st.expander("Betas por time (intervalo selecionado)"):
-    df_betas = tabela_betas(_jogos_base, int(r_ini), int(r_fim), tipo)
+with st.expander(
+    "Betas / médias por time (intervalo selecionado)"
+):
+    df_betas = tabela_betas(
+        _jogos_base, int(r_ini), int(r_fim), tipo, modo=modo_metrica_ui
+    )
     st.dataframe(df_betas, use_container_width=True, hide_index=True)
 
 with st.expander("Planilha de dados (fonte dos resultados)"):
@@ -199,10 +230,11 @@ else:
 with st.expander("Metodologia"):
     st.markdown(
         """
-**Regressão:** reta `pts_acumulados ~ rodada` no intervalo escolhido; inclinação = **beta** (pts/rodada).
-Jogos pendentes recebem placar 3/1/0 derivado dos betas (casa/fora se aplicável).
+**Regressão:** reta `pts_acumulados ~ rodada` no intervalo; inclinação = **beta** (pts/rodada).
 
-**Repetir 1º turno:** espelha ida/volta já disputada; sem espelho, usa beta.
+**Média simples:** média de pontos por jogo no intervalo (≈ pts/rodada); opção casa/fora separada.
+
+**Repetir 1º turno:** espelha ida/volta já disputada; sem espelho, usa regressão ou média (fallback).
 
 **Gráfico:** trechos tracejados = incerteza que pode alterar classificação (pontos, vitórias, saldo, gols).
 

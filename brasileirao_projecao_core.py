@@ -9,7 +9,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-ModoProjecao = Literal["regressao", "repetir_turno"]
+ModoProjecao = Literal["regressao", "media_simples", "repetir_turno"]
 TipoRegressao = Literal["simples", "mandante_visitante"]
 
 _DIR_APP = Path(__file__).resolve().parent
@@ -181,6 +181,62 @@ def regressao_beta(
     }
 
 
+def media_pts_jogo(
+    jogos: list[Jogo],
+    time: str,
+    r_ini: int,
+    r_fim: int,
+    tipo: TipoRegressao,
+) -> dict[str, float]:
+    """
+    Média de pontos por jogo (≈ por rodada) no intervalo [r_ini, r_fim].
+    mandante_visitante: médias separadas em casa e fora.
+    """
+    pts_total = pts_casa = pts_fora = 0
+    n_total = n_casa = n_fora = 0
+
+    for j in jogos:
+        if not j.jogado or j.r < r_ini or j.r > r_fim:
+            continue
+        pm, pv = j.pts_reais()
+        if j.mand == time:
+            pts_total += pm
+            pts_casa += pm
+            n_total += 1
+            n_casa += 1
+        elif j.vis == time:
+            pts_total += pv
+            pts_fora += pv
+            n_total += 1
+            n_fora += 1
+
+    media_geral = pts_total / n_total if n_total else 1.0
+    if tipo == "simples":
+        return {"geral": max(media_geral, 0.0)}
+
+    media_casa = pts_casa / n_casa if n_casa else media_geral
+    media_fora = pts_fora / n_fora if n_fora else media_geral
+    return {
+        "geral": max(media_geral, 0.0),
+        "casa": max(media_casa, 0.0),
+        "fora": max(media_fora, 0.0),
+    }
+
+
+def metricas_time(
+    jogos: list[Jogo],
+    time: str,
+    r_ini: int,
+    r_fim: int,
+    modo: ModoProjecao,
+    tipo: TipoRegressao,
+) -> dict[str, float]:
+    """Betas (regressão) ou médias (pts/jogo) conforme o modo."""
+    if modo == "media_simples":
+        return media_pts_jogo(jogos, time, r_ini, r_fim, tipo)
+    return regressao_beta(jogos, time, r_ini, r_fim, tipo)
+
+
 def expected_pts_jogo(
     time: str,
     mand: str,
@@ -272,14 +328,27 @@ def aplicar_projecoes(
     r_ini: int,
     r_fim: int,
     tipo_reg: TipoRegressao,
+    *,
+    modo_fallback: ModoProjecao = "regressao",
 ) -> tuple[list[Jogo], pd.DataFrame]:
     jogos = [Jogo(**j.__dict__) for j in jogos]  # cópia
     times = times_do_calendario(jogos)
     mapa = mapa_contrapartidas(jogos)
 
+    if modo == "repetir_turno":
+        modo_metrica = modo_fallback if modo_fallback != "repetir_turno" else "regressao"
+    else:
+        modo_metrica = modo
+
     betas = {
-        t: regressao_beta(jogos, t, r_ini, r_fim, tipo_reg) for t in times
+        t: metricas_time(jogos, t, r_ini, r_fim, modo_metrica, tipo_reg) for t in times
     }
+
+    label_modelo = {
+        "regressao": "regressão",
+        "media_simples": "média simples",
+    }.get(modo_metrica, "regressão")
+    label_fallback = f"sem espelho — {label_modelo}"
 
     log_rows = []
 
@@ -288,7 +357,6 @@ def aplicar_projecoes(
             continue
 
         if modo == "repetir_turno":
-            # contrapartida: mesmo par, mandante/visitante invertidos
             chave = (j.par, j.vis, j.mand)
             ref = mapa.get(chave)
             if ref and ref.jogado:
@@ -296,14 +364,13 @@ def aplicar_projecoes(
                 j.proj_pm, j.proj_pv = pm, pv
                 j.origem = f"espelho R{ref.r} ({ref.mand} {ref.placar} {ref.vis})"
             else:
-                # sem espelho: usa expectativa por beta (fallback)
                 pm, pv = projetar_jogo_regressao(j, betas, tipo_reg)
                 j.proj_pm, j.proj_pv = pm, pv
-                j.origem = "sem espelho — beta"
+                j.origem = label_fallback
         else:
             pm, pv = projetar_jogo_regressao(j, betas, tipo_reg)
             j.proj_pm, j.proj_pv = pm, pv
-            j.origem = "regressão"
+            j.origem = label_modelo
 
         log_rows.append(
             {
@@ -348,16 +415,23 @@ def tabela_betas(
     r_ini: int,
     r_fim: int,
     tipo: TipoRegressao,
+    modo: ModoProjecao = "regressao",
 ) -> pd.DataFrame:
     rows = []
+    col_main = (
+        "Media_pts/jogo" if modo == "media_simples" else "Beta_pts/rodada"
+    )
+    col_casa = "Media_casa" if modo == "media_simples" else "Beta_casa"
+    col_fora = "Media_fora" if modo == "media_simples" else "Beta_fora"
+
     for t in times_do_calendario(jogos):
-        b = regressao_beta(jogos, t, r_ini, r_fim, tipo)
-        row = {"Time": t, "Beta_pts/rodada": round(b["geral"], 3)}
+        b = metricas_time(jogos, t, r_ini, r_fim, modo, tipo)
+        row = {"Time": t, col_main: round(b["geral"], 3)}
         if tipo == "mandante_visitante":
-            row["Beta_casa"] = round(b.get("casa", b["geral"]), 3)
-            row["Beta_fora"] = round(b.get("fora", b["geral"]), 3)
+            row[col_casa] = round(b.get("casa", b["geral"]), 3)
+            row[col_fora] = round(b.get("fora", b["geral"]), 3)
         rows.append(row)
-    return pd.DataFrame(rows).sort_values("Beta_pts/rodada", ascending=False)
+    return pd.DataFrame(rows).sort_values(col_main, ascending=False)
 
 
 # ---------------------------------------------------------------------------

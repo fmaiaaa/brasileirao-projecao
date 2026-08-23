@@ -28,8 +28,9 @@ Salve o arquivo e recarregue o app.
 
 ## Modos de projeção
 
-- **Regressão linear:** betas (pts/rodada) no intervalo escolhido; preenche jogos pendentes.
-- **Repetir 1º turno:** espelha ida/volta já disputada; fallback por beta.
+- **Regressão linear:** inclinação dos pts acumulados no intervalo (beta pts/rodada).
+- **Média simples:** média de pontos por jogo no intervalo; pode separar casa/fora.
+- **Repetir 1º turno:** espelha ida/volta já disputada; fallback por regressão ou média.
 
 ## Deploy Streamlit Cloud
 
