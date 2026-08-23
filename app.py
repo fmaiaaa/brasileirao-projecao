@@ -15,6 +15,7 @@ from brasileirao_projecao_core import (
     ModoProjecao,
     TipoRegressao,
     VarianteRegressaoAcumulada,
+    _MODO_PARA_VARIANTE,
     aplicar_projecoes,
     carregar_jogos,
     colunas_estatisticas_grafico,
@@ -192,24 +193,27 @@ titulo_secao("Configuração da projeção")
 r_ini_proj = 1
 r_fim_proj = int(min(_ult_r, 38))
 
-_MODO_ACUM_SIMPLES = (
-    "Regressão acumulada + simples: "
-    "pts_acumulados ~ rodada + indicador_casa + rodada × indicador_casa"
+_MODO_MOMENTO_ACELERACAO = (
+    "Regressão de Momento e Aceleração — "
+    "Pontos Acumulados (PA) ~ Rodada (R) + Rodada² (R²) + Forma Recente (FR)"
 )
-_MODO_ACUM_ROBUSTA = (
-    "Regressão acumulada + robusta: "
-    "pts_acumulados ~ rodada + rodada² + proporção_casa "
-    "+ força oponentes passados + forma recente (últimos 5 jogos)"
+_MODO_MOMENTO_HISTORICO = (
+    "Regressão de Momento e Histórico — "
+    "Pontos Acumulados (PA) ~ Forma Recente (FR) + "
+    "Força dos Adversários Passados (FAP) + Proporção Casa (PC)"
 )
-_MODO_MEDIA = (
-    "Média casa x fora × forma recente "
-    "(média casa/fora × últimos 5 / média camp.; pts decimais)"
+_MODO_COMPLETA = (
+    "Regressão Completa — "
+    "Pontos Acumulados (PA) ~ Rodada (R) + Rodada² (R²) + Forma Recente (FR) + "
+    "Força dos Adversários Passados (FAP) + Proporção Casa (PC)"
 )
-_MODO_TURNO = "Repetir 1 turno"
+_MODO_MEDIA = "Média casa x fora × forma recente"
+_MODO_TURNO = "Repetir 1º turno"
 
 _modo_opcoes = [
-    _MODO_ACUM_SIMPLES,
-    _MODO_ACUM_ROBUSTA,
+    _MODO_MOMENTO_ACELERACAO,
+    _MODO_MOMENTO_HISTORICO,
+    _MODO_COMPLETA,
     _MODO_MEDIA,
     _MODO_TURNO,
 ]
@@ -217,27 +221,30 @@ modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
 modo: ModoProjecao
 tipo: TipoRegressao = "mandante_visitante"
-variante_acum: VarianteRegressaoAcumulada = "acum_simples"
+variante_acum: VarianteRegressaoAcumulada = "momento_aceleracao"
 
-if modo_label.startswith("Regressão acumulada + robusta"):
-    modo = "regressao_acum_robusta"
-    variante_acum = "acum_robusta"
-elif modo_label.startswith("Regressão acumulada + simples"):
-    modo = "regressao_acum_simples"
-    variante_acum = "acum_simples"
+if modo_label.startswith("Regressão de Momento e Histórico"):
+    modo = "regressao_momento_historico"
+    variante_acum = "momento_historico"
+elif modo_label.startswith("Regressão de Momento e Aceleração"):
+    modo = "regressao_momento_aceleracao"
+    variante_acum = "momento_aceleracao"
+elif modo_label.startswith("Regressão Completa"):
+    modo = "regressao_completa"
+    variante_acum = "completa"
 elif modo_label == _MODO_MEDIA:
     modo = "media_simples"
 elif modo_label == _MODO_TURNO:
     modo = "repetir_turno"
 else:
-    modo = "regressao_acum_simples"
-    variante_acum = "acum_simples"
+    modo = "regressao_momento_aceleracao"
+    variante_acum = "momento_aceleracao"
 
 with st.expander("Detalhes do modelo"):
-    if modo in ("regressao_acum_simples", "regressao_acum_robusta"):
+    if modo in _MODO_PARA_VARIANTE:
         st.caption(
             "Curva de pontos acumulados por rodada; cada jogo recebe o delta "
-            "decimal da curva (sem arredondar para 3/1/0). Significância: "
+            "decimal da curva. Significância: "
             "*** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
         st.dataframe(
@@ -254,7 +261,7 @@ with st.expander("Detalhes do modelo"):
     elif modo == "media_simples":
         st.caption(
             "Projeção = média pts/jogo em casa ou fora × "
-            "(média últimos 5 jogos / média campeonato no intervalo)."
+            "média últimos 5 jogos / média campeonato no intervalo."
         )
         st.dataframe(
             tabela_medias_simples_times(_jogos_base, r_ini_proj, r_fim_proj),
@@ -266,7 +273,7 @@ with st.expander("Detalhes do modelo"):
         )
     else:
         st.caption(
-            "Jogos do 1º turno (rodadas 1–19) usados como referência para espelhar a volta; "
+            "Jogos do 1º turno usados como referência para espelhar a volta; "
             "sem par já disputado, usa média casa/fora × forma recente."
         )
         st.dataframe(
