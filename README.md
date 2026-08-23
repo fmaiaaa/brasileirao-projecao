@@ -27,12 +27,12 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 
 ## Modos de projeção
 
-1. **Regressão linear + simples:** pts por partida — `pts ~ rodada + indicador_casa + rodada × indicador_casa`
-2. **Regressão linear + robusta:** pts por partida — `pts ~ rodada + rodada² + casa + interação + força adversário + forma recente`
-3. **Regressão acumulada + simples:** pts acumulados por rodada — `pts_acumulados ~ rodada + rodada²`
-4. **Regressão acumulada + robusta:** pts acumulados — `pts_acumulados ~ rodada + rodada² + forma recente (últimos 5 jogos)`
-5. **Média simples casa x fora** — médias distintas de pontos por jogo em casa e fora
-6. **Repetir 1 turno** — espelha ida/volta já disputada; fallback por regressão linear
+Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arredondar para 3/1/0.
+
+1. **Regressão acumulada + simples:** pts acumulados por rodada — `pts_acumulados ~ rodada + rodada²`
+2. **Regressão acumulada + robusta:** pts acumulados — `pts_acumulados ~ rodada + rodada² + força adversário + forma recente (últimos 5 jogos)`
+3. **Média casa x fora × forma recente** — `média casa ou fora × (média últimos 5 / média campeonato)`
+4. **Repetir 1 turno** — espelha ida/volta já disputada; fallback pela média × forma recente
 
 Desempate na classificação: vitórias → saldo de gols → gols marcados → confronto direto entre empatados.
 

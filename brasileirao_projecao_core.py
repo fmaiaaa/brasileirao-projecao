@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 
 ModoProjecao = Literal[
-    "regressao",
     "media_simples",
     "repetir_turno",
     "regressao_acum_simples",
@@ -58,8 +57,8 @@ class Jogo:
     vis: str
     placar: str
     est: str = ""
-    proj_pm: int | None = field(default=None, repr=False)
-    proj_pv: int | None = field(default=None, repr=False)
+    proj_pm: float | None = field(default=None, repr=False)
+    proj_pv: float | None = field(default=None, repr=False)
     proj_gm: int | None = field(default=None, repr=False)
     proj_gv: int | None = field(default=None, repr=False)
     origem: str = field(default="", repr=False)
@@ -78,12 +77,13 @@ class Jogo:
             return None
         return pontos_placar(*p)
 
-    def pts_efetivos(self) -> tuple[int, int]:
+    def pts_efetivos(self) -> tuple[float, float]:
         if self.jogado:
-            return self.pts_reais()  # type: ignore[return-value]
+            pm, pv = self.pts_reais()  # type: ignore[misc]
+            return float(pm), float(pv)
         if self.proj_pm is not None and self.proj_pv is not None:
-            return self.proj_pm, self.proj_pv
-        return 0, 0
+            return float(self.proj_pm), float(self.proj_pv)
+        return 0.0, 0.0
 
 
 def jogos_from_records(records: list[dict]) -> list[Jogo]:
@@ -623,8 +623,24 @@ def regressao_beta(
 def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> list[str]:
     cols = ["Intercepto", "Rodada", "Rodada²"]
     if variante == "acum_robusta":
-        cols.append("Forma recente")
+        cols.extend(["Força adversário", "Forma recente"])
     return cols
+
+
+def _forca_media_adversarios_ate(
+    jogos: list[Jogo],
+    time: str,
+    ate_rodada: int,
+    forca_map: dict[str, float],
+) -> float:
+    """Média da força (pts/jogo) dos adversários enfrentados até a rodada."""
+    vals: list[float] = []
+    for j in jogos:
+        if not j.jogado or j.r > ate_rodada or time not in (j.mand, j.vis):
+            continue
+        adv = j.vis if j.mand == time else j.mand
+        vals.append(forca_map.get(adv, 1.0))
+    return sum(vals) / len(vals) if vals else 1.0
 
 
 def _coletar_obs_regressao_acumulada(
@@ -632,11 +648,13 @@ def _coletar_obs_regressao_acumulada(
     time: str,
     r_ini: int,
     r_fim: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    forca_map: dict[str, float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Pts acumulados ao fim de cada rodada disputada no intervalo."""
     rodadas: list[float] = []
     y_vals: list[float] = []
     formas: list[float] = []
+    forcas: list[float] = []
 
     for r in range(r_ini, r_fim + 1):
         jogou_r = any(
@@ -648,11 +666,13 @@ def _coletar_obs_regressao_acumulada(
         rodadas.append(float(r))
         y_vals.append(float(acum.pts))
         formas.append(forma_recente_ate(jogos, time, r + 1, ""))
+        forcas.append(_forca_media_adversarios_ate(jogos, time, r, forca_map))
 
     return (
         np.array(rodadas, dtype=float),
         np.array(y_vals, dtype=float),
         np.array(formas, dtype=float),
+        np.array(forcas, dtype=float),
     )
 
 
@@ -660,61 +680,74 @@ def _ajustar_regressao_acumulada(
     rodadas: np.ndarray,
     y: np.ndarray,
     forma: np.ndarray,
+    forca: np.ndarray,
     variante: VarianteRegressaoAcumulada,
 ) -> dict:
-    """Pts acumulados ~ rodada (+ rodada², forma recente)."""
-    usa_forma = variante == "acum_robusta"
+    """Pts acumulados ~ rodada (+ rodada², força adversário, forma recente)."""
+    usa_forca = usa_forma = variante == "acum_robusta"
     n = len(y)
     if n == 0:
         return _coeficientes_vazios_acumulada(variante)
 
     r = rodadas.astype(float)
     forma_arr = forma.astype(float) if len(forma) == n else None
+    forca_arr = forca.astype(float) if len(forca) == n else None
     b0_g, b1_g = _ols_pts_rodada(r, y)
 
-    def _montar(rodada2_flag: bool, forma_flag: bool):
+    def _montar(rodada2_flag: bool, forca_flag: bool, forma_flag: bool):
         cols = [np.ones(n), r]
         if rodada2_flag:
             cols.append(r ** 2)
+        if forca_flag and forca_arr is not None:
+            cols.append(forca_arr)
         if forma_flag and forma_arr is not None:
             cols.append(forma_arr)
         return cols
 
-    def _extrair(coef: np.ndarray, rodada2_flag: bool, forma_flag: bool):
+    def _extrair(
+        coef: np.ndarray, rodada2_flag: bool, forca_flag: bool, forma_flag: bool
+    ):
         idx = 0
         b0 = float(coef[idx]); idx += 1
         b1 = float(coef[idx]); idx += 1
-        b_r2 = b_forma = 0.0
+        b_r2 = b_forca = b_forma = 0.0
         if rodada2_flag:
             b_r2 = float(coef[idx]); idx += 1
+        if forca_flag:
+            b_forca = float(coef[idx]); idx += 1
         if forma_flag:
             b_forma = float(coef[idx])
-        return b0, b1, b_r2, b_forma
+        return b0, b1, b_r2, b_forca, b_forma
 
-    tentativas = (
-        [(True, True), (True, False), (False, False)]
-        if variante == "acum_robusta"
-        else [(True, False), (False, False)]
-    )
-    b0, b1, b_r2, b_forma = b0_g, b1_g, 0.0, 0.0
-    fit_r2 = fit_forma = True
+    if variante == "acum_robusta":
+        tentativas = [
+            (True, True, True),
+            (True, True, False),
+            (True, False, False),
+            (False, False, False),
+        ]
+    else:
+        tentativas = [(True, False, False), (False, False, False)]
+
+    b0, b1, b_r2, b_forca, b_forma = b0_g, b1_g, 0.0, 0.0, 0.0
+    fit_r2 = fit_forca = fit_forma = True
     termos: list[dict] = []
     r2 = float("nan")
 
-    for rodada2_flag, forma_flag in tentativas:
-        cols = _montar(rodada2_flag, forma_flag)
+    for rodada2_flag, forca_flag, forma_flag in tentativas:
+        cols = _montar(rodada2_flag, forca_flag, forma_flag)
         if n < len(cols):
             continue
         X = np.column_stack(cols)
         coef, _, _, _ = np.linalg.lstsq(X, y.astype(float), rcond=None)
         pvals = _ols_pvalues(X, y.astype(float), coef)
-        nomes = _ordem_variaveis_regressao_acumulada(
-            "acum_robusta" if forma_flag else "acum_simples"
-        )
-        if not rodada2_flag:
-            nomes = [n for n in nomes if n != "Rodada²"]
-        if not forma_flag:
-            nomes = [n for n in nomes if n != "Forma recente"]
+        nomes: list[str] = ["Intercepto", "Rodada"]
+        if rodada2_flag:
+            nomes.append("Rodada²")
+        if forca_flag:
+            nomes.append("Força adversário")
+        if forma_flag:
+            nomes.append("Forma recente")
         termos = [
             {
                 "Variável": nomes[i],
@@ -724,8 +757,11 @@ def _ajustar_regressao_acumulada(
             for i in range(len(nomes))
         ]
         r2 = _ols_r2(X, y.astype(float), coef)
-        b0, b1, b_r2, b_forma = _extrair(coef, rodada2_flag, forma_flag)
+        b0, b1, b_r2, b_forca, b_forma = _extrair(
+            coef, rodada2_flag, forca_flag, forma_flag
+        )
         fit_r2 = rodada2_flag
+        fit_forca = forca_flag
         fit_forma = forma_flag
         break
 
@@ -733,8 +769,10 @@ def _ajustar_regressao_acumulada(
         "intercept": b0,
         "beta_rodada": b1,
         "beta_rodada2": b_r2 if fit_r2 else 0.0,
+        "beta_forca": b_forca if fit_forca else 0.0,
         "beta_forma": b_forma if fit_forma else 0.0,
         "usa_rodada2": fit_r2,
+        "usa_forca": fit_forca,
         "usa_forma": fit_forma,
         "variante_acum": variante,
         "termos": termos,
@@ -748,8 +786,10 @@ def _coeficientes_vazios_acumulada(variante: VarianteRegressaoAcumulada) -> dict
         "intercept": 1.0,
         "beta_rodada": 0.0,
         "beta_rodada2": 0.0,
+        "beta_forca": 0.0,
         "beta_forma": 0.0,
-        "usa_rodada2": variante == "acum_simples" or variante == "acum_robusta",
+        "usa_rodada2": True,
+        "usa_forca": variante == "acum_robusta",
         "usa_forma": variante == "acum_robusta",
         "variante_acum": variante,
         "termos": [],
@@ -758,11 +798,18 @@ def _coeficientes_vazios_acumulada(variante: VarianteRegressaoAcumulada) -> dict
     }
 
 
-def _prever_acumulado(b: dict, rodada: int) -> float:
+def _prever_acumulado(
+    b: dict,
+    rodada: int,
+    *,
+    forca_adversario: float = 1.0,
+) -> float:
     r = float(rodada)
     val = b["intercept"] + b["beta_rodada"] * r
     if b.get("usa_rodada2"):
         val += b.get("beta_rodada2", 0.0) * r * r
+    if b.get("usa_forca"):
+        val += b.get("beta_forca", 0.0) * forca_adversario
     if b.get("usa_forma"):
         val += b.get("beta_forma", 0.0) * b.get("forma_recente", 1.0)
     return max(val, 0.0)
@@ -774,9 +821,13 @@ def regressao_acumulada_beta(
     r_ini: int,
     r_fim: int,
     variante: VarianteRegressaoAcumulada,
+    forca_map: dict[str, float] | None = None,
 ) -> dict:
-    rodadas, y, formas = _coletar_obs_regressao_acumulada(jogos, time, r_ini, r_fim)
-    coefs = _ajustar_regressao_acumulada(rodadas, y, formas, variante)
+    fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
+    rodadas, y, formas, forcas = _coletar_obs_regressao_acumulada(
+        jogos, time, r_ini, r_fim, fm
+    )
+    coefs = _ajustar_regressao_acumulada(rodadas, y, formas, forcas, variante)
     if variante == "acum_robusta":
         coefs["forma_recente"] = forma_recente_atual(jogos, time)
     return coefs
@@ -802,6 +853,32 @@ def _discretizar_pts_esperados(em: float, ev: float) -> tuple[int, int]:
     if pv > pm:
         return 0, 3
     return 1, 1
+
+
+def fator_forma_recente(
+    jogos: list[Jogo],
+    time: str,
+    r_ini: int,
+    r_fim: int,
+) -> float:
+    """Razão média últimos 5 jogos / média do campeonato no intervalo."""
+    media_camp = media_pts_jogo(jogos, time, r_ini, r_fim, "simples")["geral"]
+    if media_camp <= 0:
+        return 1.0
+    return forma_recente_atual(jogos, time) / media_camp
+
+
+def projetar_jogo_media(
+    jogo: Jogo,
+    medias: dict[str, dict[str, float]],
+    fatores: dict[str, float],
+) -> tuple[float, float]:
+    """Pts/jogo decimais: média casa/fora × fator forma recente."""
+    mm = medias[jogo.mand]
+    mv = medias[jogo.vis]
+    pm = max(mm.get("casa", mm["geral"]) * fatores[jogo.mand], 0.0)
+    pv = max(mv.get("fora", mv["geral"]) * fatores[jogo.vis], 0.0)
+    return pm, pv
 
 
 def media_pts_jogo(
@@ -857,12 +934,8 @@ def metricas_time(
     variante: VarianteRegressao = "interacao",
     forca_map: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    """Betas (regressão) ou médias (pts/jogo) conforme o modo."""
-    if modo == "media_simples":
-        return media_pts_jogo(jogos, time, r_ini, r_fim, tipo)
-    return regressao_beta(
-        jogos, time, r_ini, r_fim, variante, forca_map or {}
-    )
+    """Médias de pts/jogo conforme o modo."""
+    return media_pts_jogo(jogos, time, r_ini, r_fim, tipo)
 
 
 def expected_pts_jogo(
@@ -956,19 +1029,19 @@ def media_ppg(jogos: list[Jogo], time: str) -> float:
 
 
 def _acum_proj_ate(
-    acum_cache: dict[str, dict[int, int]],
+    acum_cache: dict[str, dict[int, float]],
     time: str,
     rodada: int,
     jogos: list[Jogo],
     r_fim: int,
-) -> int:
+) -> float:
     if rodada <= 0:
-        return 0
+        return 0.0
     if rodada in acum_cache.get(time, {}):
         return acum_cache[time][rodada]
     if rodada <= r_fim:
-        return stats_acumuladas_ate(jogos, time, rodada, so_realizados=True).pts
-    return 0
+        return float(stats_acumuladas_ate(jogos, time, rodada, so_realizados=True).pts)
+    return 0.0
 
 
 def aplicar_projecoes_acumulada(
@@ -977,18 +1050,20 @@ def aplicar_projecoes_acumulada(
     r_fim: int,
     variante: VarianteRegressaoAcumulada,
 ) -> tuple[list[Jogo], pd.DataFrame]:
-    """Projeta via curva de pts acumulados por rodada (não pts por partida)."""
+    """Projeta via curva de pts acumulados por rodada (pts decimais por jogo)."""
     jogos = [Jogo(**j.__dict__) for j in jogos]
     times = times_do_calendario(jogos)
+    forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
     betas = {
-        t: regressao_acumulada_beta(jogos, t, r_ini, r_fim, variante) for t in times
+        t: regressao_acumulada_beta(jogos, t, r_ini, r_fim, variante, forca_map)
+        for t in times
     }
-    acum_cache: dict[str, dict[int, int]] = {t: {0: 0} for t in times}
+    acum_cache: dict[str, dict[int, float]] = {t: {0: 0.0} for t in times}
     for t in times:
         for r in range(1, r_fim + 1):
-            acum_cache[t][r] = stats_acumuladas_ate(
-                jogos, t, r, so_realizados=True
-            ).pts
+            acum_cache[t][r] = float(
+                stats_acumuladas_ate(jogos, t, r, so_realizados=True).pts
+            )
 
     label = (
         "regressão acumulada robusta"
@@ -1003,22 +1078,57 @@ def aplicar_projecoes_acumulada(
         m, v, r = j.mand, j.vis, j.r
         prev_m = _acum_proj_ate(acum_cache, m, r - 1, jogos, r_fim)
         prev_v = _acum_proj_ate(acum_cache, v, r - 1, jogos, r_fim)
-        target_m = _prever_acumulado(betas[m], r)
-        target_v = _prever_acumulado(betas[v], r)
+        target_m = _prever_acumulado(
+            betas[m], r, forca_adversario=forca_map.get(v, 1.0)
+        )
+        target_v = _prever_acumulado(
+            betas[v], r, forca_adversario=forca_map.get(m, 1.0)
+        )
         delta_m = max(0.0, target_m - prev_m)
         delta_v = max(0.0, target_v - prev_v)
-        pm, pv = _discretizar_pts_esperados(delta_m, delta_v)
-        j.proj_pm, j.proj_pv = pm, pv
+        j.proj_pm, j.proj_pv = delta_m, delta_v
         j.origem = label
-        acum_cache[m][r] = prev_m + pm
-        acum_cache[v][r] = prev_v + pv
+        acum_cache[m][r] = prev_m + delta_m
+        acum_cache[v][r] = prev_v + delta_v
 
         log_rows.append(
             {
                 "Rodada": j.r,
                 "Mandante": j.mand,
                 "Visitante": j.vis,
-                "Proj": f"{j.proj_pm} / {j.proj_pv}",
+                "Proj": f"{delta_m:.2f} / {delta_v:.2f}",
+            }
+        )
+
+    return jogos, pd.DataFrame(log_rows)
+
+
+def aplicar_projecoes_media(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+) -> tuple[list[Jogo], pd.DataFrame]:
+    """Média casa/fora × fator forma recente (pts decimais)."""
+    jogos = [Jogo(**j.__dict__) for j in jogos]
+    times = times_do_calendario(jogos)
+    medias = {
+        t: media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante") for t in times
+    }
+    fatores = {t: fator_forma_recente(jogos, t, r_ini, r_fim) for t in times}
+    log_rows: list[dict] = []
+
+    for j in sorted(jogos, key=lambda x: (x.r, x.hora, x.mand)):
+        if j.jogado:
+            continue
+        pm, pv = projetar_jogo_media(j, medias, fatores)
+        j.proj_pm, j.proj_pv = pm, pv
+        j.origem = "média casa/fora × forma recente"
+        log_rows.append(
+            {
+                "Rodada": j.r,
+                "Mandante": j.mand,
+                "Visitante": j.vis,
+                "Proj": f"{pm:.2f} / {pv:.2f}",
             }
         )
 
@@ -1038,73 +1148,38 @@ def aplicar_projecoes(
         return aplicar_projecoes_acumulada(jogos, r_ini, r_fim, "acum_simples")
     if modo == "regressao_acum_robusta":
         return aplicar_projecoes_acumulada(jogos, r_ini, r_fim, "acum_robusta")
+    if modo == "media_simples":
+        return aplicar_projecoes_media(jogos, r_ini, r_fim)
 
-    jogos = [Jogo(**j.__dict__) for j in jogos]  # cópia
-    times = times_do_calendario(jogos)
+    jogos = [Jogo(**j.__dict__) for j in jogos]
     mapa = mapa_contrapartidas(jogos)
-    forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
-
-    if modo == "repetir_turno":
-        modo_metrica: ModoProjecao = "regressao"
-        tipo_metrica: TipoRegressao = "mandante_visitante"
-        variante_metrica: VarianteRegressao = "interacao"
-    else:
-        modo_metrica = modo
-        tipo_metrica = tipo_reg
-        variante_metrica = variante_reg
-
-    betas = {
-        t: metricas_time(
-            jogos,
-            t,
-            r_ini,
-            r_fim,
-            modo_metrica,
-            tipo_metrica,
-            variante=variante_metrica,
-            forca_map=forca_map,
-        )
-        for t in times
+    medias = {
+        t: media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante")
+        for t in times_do_calendario(jogos)
     }
-
-    label_modelo = {
-        "regressao": "regressão",
-        "media_simples": "média simples",
-    }.get(modo_metrica, "regressão")
-    label_fallback = f"sem espelho — {label_modelo}"
-
-    log_rows = []
+    fatores = {
+        t: fator_forma_recente(jogos, t, r_ini, r_fim)
+        for t in times_do_calendario(jogos)
+    }
+    label_fallback = "sem espelho — média casa/fora × forma recente"
+    log_rows: list[dict] = []
 
     for j in sorted(jogos, key=lambda x: (x.r, x.hora, x.mand)):
         if j.jogado:
             continue
 
-        if modo == "repetir_turno":
-            chave = (j.par, j.vis, j.mand)
-            ref = mapa.get(chave)
-            if ref and ref.jogado:
-                pm, pv = espelhar_contrapartida(j, ref)
-                j.proj_pm, j.proj_pv = pm, pv
-                j.origem = f"espelho R{ref.r} ({ref.mand} {ref.placar} {ref.vis})"
-            else:
-                pm, pv = projetar_jogo_regressao(
-                    j, betas, tipo_metrica,
-                    variante=variante_metrica, forca_map=forca_map,
-                )
-                j.proj_pm, j.proj_pv = pm, pv
-                j.origem = label_fallback
+        chave = (j.par, j.vis, j.mand)
+        ref = mapa.get(chave)
+        if ref and ref.jogado:
+            pm, pv = espelhar_contrapartida(j, ref)
+            j.proj_pm, j.proj_pv = float(pm), float(pv)
+            j.origem = f"espelho R{ref.r} ({ref.mand} {ref.placar} {ref.vis})"
+            proj_txt = f"{pm} / {pv}"
         else:
-            pm, pv = projetar_jogo_regressao(
-                j, betas, tipo_reg,
-                variante=variante_reg, forca_map=forca_map,
-            )
+            pm, pv = projetar_jogo_media(j, medias, fatores)
             j.proj_pm, j.proj_pv = pm, pv
-            j.origem = label_modelo
-
-        if j.proj_gm is not None and j.proj_gv is not None:
-            proj_txt = f"{j.proj_gm} x {j.proj_gv}"
-        else:
-            proj_txt = f"{j.proj_pm} / {j.proj_pv}"
+            j.origem = label_fallback
+            proj_txt = f"{pm:.2f} / {pv:.2f}"
 
         log_rows.append(
             {
@@ -1130,7 +1205,7 @@ def classificacao(jogos: list[Jogo], incluir_proj: bool = True) -> pd.DataFrame:
     df = pd.DataFrame(
         {
             "Time": [t for t, _ in linhas],
-            "Pontos": [s.pts for _, s in linhas],
+            "Pontos": [round(s.pts, 1) for _, s in linhas],
         }
     )
     df.insert(0, "Pos", range(1, len(df) + 1))
@@ -1144,14 +1219,12 @@ def tabela_betas(
     r_ini: int,
     r_fim: int,
     tipo: TipoRegressao,
-    modo: ModoProjecao = "regressao",
+    modo: ModoProjecao = "media_simples",
 ) -> pd.DataFrame:
     rows = []
-    col_main = (
-        "Media_pts/jogo" if modo == "media_simples" else "Beta_pts/rodada"
-    )
-    col_casa = "Media_casa" if modo == "media_simples" else "Beta_casa"
-    col_fora = "Media_fora" if modo == "media_simples" else "Beta_fora"
+    col_main = "Media_pts/jogo"
+    col_casa = "Media_casa"
+    col_fora = "Media_fora"
 
     for t in times_do_calendario(jogos):
         b = metricas_time(jogos, t, r_ini, r_fim, modo, tipo)
@@ -1191,10 +1264,11 @@ def tabela_regressao_acumulada_resumo(
     variante: VarianteRegressaoAcumulada,
 ) -> pd.DataFrame:
     """R² e significância dos termos da regressão de pts acumulados."""
+    forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
     ordem = _ordem_variaveis_regressao_acumulada(variante)
     rows: list[dict] = []
     for t in times_do_calendario(jogos):
-        b = regressao_acumulada_beta(jogos, t, r_ini, r_fim, variante)
+        b = regressao_acumulada_beta(jogos, t, r_ini, r_fim, variante, forca_map)
         row: dict = {"Time": t, "R²": b.get("r2")}
         sig = {
             termo["Variável"]: pvalor_estrela(termo.get("p-valor"))
@@ -1211,16 +1285,22 @@ def tabela_medias_simples_times(
     r_ini: int,
     r_fim: int,
 ) -> pd.DataFrame:
-    """Médias de pts/jogo (geral, casa e fora) por time no intervalo."""
+    """Médias de pts/jogo com fator forma e projeção casa/fora."""
     rows: list[dict] = []
     for t in times_do_calendario(jogos):
         m = media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante")
+        fator = fator_forma_recente(jogos, t, r_ini, r_fim)
+        media_casa = m.get("casa", m["geral"])
+        media_fora = m.get("fora", m["geral"])
         rows.append(
             {
                 "Time": t,
                 "Média pts/jogo (geral)": round(m["geral"], 3),
-                "Média pts/jogo (casa)": round(m.get("casa", m["geral"]), 3),
-                "Média pts/jogo (fora)": round(m.get("fora", m["geral"]), 3),
+                "Média pts/jogo (casa)": round(media_casa, 3),
+                "Média pts/jogo (fora)": round(media_fora, 3),
+                "Fator forma (últ. 5 / camp.)": round(fator, 3),
+                "Proj. pts/jogo (casa)": round(media_casa * fator, 3),
+                "Proj. pts/jogo (fora)": round(media_fora * fator, 3),
             }
         )
     return pd.DataFrame(rows).sort_values("Time")
@@ -1463,9 +1543,9 @@ def tabela_comparativa_posicoes(
 
 def mapa_posicao_pontos(
     jogos: list[Jogo], *, incluir_proj: bool
-) -> dict[str, tuple[int, int]]:
+) -> dict[str, tuple[int, float]]:
     df = classificacao(jogos, incluir_proj=incluir_proj)
-    return {row.Time: (int(row.Pos), int(row.Pontos)) for row in df.itertuples()}
+    return {row.Time: (int(row.Pos), float(row.Pontos)) for row in df.itertuples()}
 
 
 def mapa_vitorias_saldo_proj(
@@ -1481,7 +1561,7 @@ def mapa_vitorias_saldo_proj(
 
 @dataclass
 class StatsTime:
-    pts: int = 0
+    pts: float = 0.0
     vit: int = 0
     emp: int = 0
     der: int = 0
@@ -1499,7 +1579,7 @@ class StatsTime:
     def copy(self) -> "StatsTime":
         return StatsTime(self.pts, self.vit, self.emp, self.der, self.gf, self.gc)
 
-    def add(self, pts: int, gf: int, gc: int) -> None:
+    def add(self, pts: float, gf: int, gc: int) -> None:
         self.pts += pts
         self.gf += gf
         self.gc += gc
@@ -1507,7 +1587,7 @@ class StatsTime:
             self.vit += 1
         elif pts == 1:
             self.emp += 1
-        else:
+        elif pts == 0:
             self.der += 1
 
 
@@ -1545,14 +1625,9 @@ def _stats_jogo_para_time(jogo: Jogo, time: str) -> StatsTime | None:
     if jogo.proj_gm is not None and jogo.proj_gv is not None:
         return _stats_de_placar(jogo.proj_gm, jogo.proj_gv, time, jogo.mand)
     if jogo.proj_pm is not None and jogo.proj_pv is not None:
-        pts = jogo.proj_pm if time == jogo.mand else jogo.proj_pv
+        pts = float(jogo.proj_pm if time == jogo.mand else jogo.proj_pv)
         s = StatsTime()
-        if pts == 3:
-            s.add(3, 1, 0)
-        elif pts == 0:
-            s.add(0, 0, 1)
-        else:
-            s.add(1, 1, 1)
+        s.pts = pts
         return s
     return None
 
@@ -1598,7 +1673,7 @@ def stats_acumuladas_ate(
     return total
 
 
-def _chave_criterios_basicos(s: StatsTime) -> tuple[int, int, int, int]:
+def _chave_criterios_basicos(s: StatsTime) -> tuple[float, int, int, int]:
     return (s.pts, s.vit, s.sg, s.gf)
 
 

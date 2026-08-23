@@ -14,7 +14,6 @@ from brasileirao_estilo import (
 from brasileirao_projecao_core import (
     ModoProjecao,
     TipoRegressao,
-    VarianteRegressao,
     VarianteRegressaoAcumulada,
     aplicar_projecoes,
     carregar_jogos,
@@ -28,7 +27,6 @@ from brasileirao_projecao_core import (
     kpis_globais,
     mapa_posicao_pontos,
     mapa_vitorias_saldo_proj,
-    tabela_regressao_resumo,
     tabela_regressao_acumulada_resumo,
     tabela_medias_simples_times,
     tabela_jogos_primeiro_turno,
@@ -192,30 +190,22 @@ titulo_secao("Configuração da projeção")
 r_ini_proj = 1
 r_fim_proj = int(min(_ult_r, 38))
 
-_MODO_SIMPLES = (
-    "Regressão linear + simples: "
-    "pts ~ rodada + indicador_casa + rodada × indicador_casa"
-)
-_MODO_ROBUSTA = (
-    "Regressão linear + robusta: "
-    "pts ~ rodada + rodada² + indicador_casa + rodada × indicador_casa "
-    "+ força adversário (média pts/jogo do oponente no intervalo) "
-    "+ forma recente (últimos 5 jogos)"
-)
 _MODO_ACUM_SIMPLES = (
     "Regressão acumulada + simples: "
-    "pts_acumulados ~ rodada + rodada²"
+    "pts_acumulados ~ rodada + rodada² (pts decimais por jogo)"
 )
 _MODO_ACUM_ROBUSTA = (
     "Regressão acumulada + robusta: "
-    "pts_acumulados ~ rodada + rodada² + forma recente (últimos 5 jogos)"
+    "pts_acumulados ~ rodada + rodada² + força adversário "
+    "+ forma recente (últimos 5 jogos; pts decimais por jogo)"
 )
-_MODO_MEDIA = "Média simples casa x fora"
+_MODO_MEDIA = (
+    "Média casa x fora × forma recente "
+    "(média casa/fora × últimos 5 / média camp.; pts decimais)"
+)
 _MODO_TURNO = "Repetir 1 turno"
 
 _modo_opcoes = [
-    _MODO_SIMPLES,
-    _MODO_ROBUSTA,
     _MODO_ACUM_SIMPLES,
     _MODO_ACUM_ROBUSTA,
     _MODO_MEDIA,
@@ -224,37 +214,28 @@ _modo_opcoes = [
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
 modo: ModoProjecao
-tipo: TipoRegressao
-variante: VarianteRegressao = "interacao"
+tipo: TipoRegressao = "mandante_visitante"
 variante_acum: VarianteRegressaoAcumulada = "acum_simples"
 
-if modo_label.startswith("Regressão linear + robusta"):
-    modo = "regressao"
-    tipo = "mandante_visitante"
-    variante = "interacao_adv_turno"
-elif modo_label.startswith("Regressão acumulada + robusta"):
+if modo_label.startswith("Regressão acumulada + robusta"):
     modo = "regressao_acum_robusta"
-    tipo = "mandante_visitante"
     variante_acum = "acum_robusta"
 elif modo_label.startswith("Regressão acumulada + simples"):
     modo = "regressao_acum_simples"
-    tipo = "mandante_visitante"
     variante_acum = "acum_simples"
 elif modo_label == _MODO_MEDIA:
     modo = "media_simples"
-    tipo = "mandante_visitante"
 elif modo_label == _MODO_TURNO:
     modo = "repetir_turno"
-    tipo = "mandante_visitante"
 else:
-    modo = "regressao"
-    tipo = "mandante_visitante"
-    variante = "interacao"
+    modo = "regressao_acum_simples"
+    variante_acum = "acum_simples"
 
 with st.expander("Detalhes do modelo"):
     if modo in ("regressao_acum_simples", "regressao_acum_robusta"):
         st.caption(
-            "Curva de pontos acumulados por rodada. Significância: "
+            "Curva de pontos acumulados por rodada; cada jogo recebe o delta "
+            "decimal da curva (sem arredondar para 3/1/0). Significância: "
             "*** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
         st.dataframe(
@@ -268,22 +249,11 @@ with st.expander("Detalhes do modelo"):
                 "R²": st.column_config.NumberColumn("R²", format="%.3f"),
             },
         )
-    elif modo == "regressao":
-        st.caption(
-            "Significância dos termos: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
-        )
-        st.dataframe(
-            tabela_regressao_resumo(
-                _jogos_base, r_ini_proj, r_fim_proj, variante
-            ),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Time": st.column_config.TextColumn("Time", pinned="left"),
-                "R²": st.column_config.NumberColumn("R²", format="%.3f"),
-            },
-        )
     elif modo == "media_simples":
+        st.caption(
+            "Projeção = média pts/jogo em casa ou fora × "
+            "(média últimos 5 jogos / média campeonato no intervalo)."
+        )
         st.dataframe(
             tabela_medias_simples_times(_jogos_base, r_ini_proj, r_fim_proj),
             use_container_width=True,
@@ -293,7 +263,10 @@ with st.expander("Detalhes do modelo"):
             },
         )
     else:
-        st.caption("Jogos do 1º turno (rodadas 1–19) usados como referência para espelhar a volta.")
+        st.caption(
+            "Jogos do 1º turno (rodadas 1–19) usados como referência para espelhar a volta; "
+            "sem par já disputado, usa média casa/fora × forma recente."
+        )
         st.dataframe(
             tabela_jogos_primeiro_turno(_jogos_base),
             use_container_width=True,
@@ -301,7 +274,7 @@ with st.expander("Detalhes do modelo"):
         )
 
 jogos_proj, df_log = aplicar_projecoes(
-    _jogos_base, modo, r_ini_proj, r_fim_proj, tipo, variante_reg=variante
+    _jogos_base, modo, r_ini_proj, r_fim_proj, tipo
 )
 
 titulo_secao("Classificação")

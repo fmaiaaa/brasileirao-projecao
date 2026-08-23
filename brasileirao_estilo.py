@@ -378,14 +378,17 @@ def kpi_duo(label_esq: str, val_esq: str, label_dir: str, val_dir: str) -> None:
 def bloco_classificacao_time(
     time: str,
     pos_atual: int,
-    pts_atual: int,
+    pts_atual: float,
     pos_final: int,
-    pts_final: int,
+    pts_final: float,
     vit_proj: int,
     saldo_proj: int,
 ) -> None:
     """Nome do time; abaixo, quatro boxes na mesma linha."""
     import streamlit as st
+
+    def _fmt_pts(v: float) -> str:
+        return f"{v:.1f}" if abs(v - round(v)) > 0.05 else str(int(round(v)))
 
     saldo_txt = f"+{saldo_proj}" if saldo_proj > 0 else str(saldo_proj)
     st.markdown(
@@ -393,9 +396,9 @@ def bloco_classificacao_time(
         f'<p class="vel-kpi-time-label">{time}</p>'
         '<div class="vel-kpi-row vel-kpi-row--quad">'
         '<div class="vel-kpi"><div class="lbl">Classificação Atual</div>'
-        f'<div class="val">{pos_atual}º · {pts_atual} pts</div></div>'
+        f'<div class="val">{pos_atual}º · {_fmt_pts(pts_atual)} pts</div></div>'
         '<div class="vel-kpi"><div class="lbl">Classificação Final</div>'
-        f'<div class="val">{pos_final}º · {pts_final} pts</div></div>'
+        f'<div class="val">{pos_final}º · {_fmt_pts(pts_final)} pts</div></div>'
         '<div class="vel-kpi"><div class="lbl">Vitórias Projetadas</div>'
         f'<div class="val">{vit_proj}</div></div>'
         '<div class="vel-kpi"><div class="lbl">Saldo de Gols Projetado</div>'
