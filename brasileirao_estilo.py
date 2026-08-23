@@ -117,13 +117,15 @@ def aplicar_estilo() -> None:
         .ficha-hero-stack {{ width: 100%; margin-bottom: 0.5rem; }}
         .ficha-hero-logo-wrap {{
             text-align: center;
-            margin: 0 auto 0.15rem auto;
+            margin: 0 auto 0 auto;
             max-width: 240px;
+            line-height: 0;
         }}
         .ficha-hero-logo-wrap img {{
             width: 100%;
             height: auto;
-            display: inline-block;
+            display: block;
+            margin: 0 auto;
             filter: drop-shadow(0 2px 6px rgba(15, 23, 42, 0.12));
         }}
         .ficha-hero {{ text-align: center; max-width: 720px; margin: 0 auto; }}
