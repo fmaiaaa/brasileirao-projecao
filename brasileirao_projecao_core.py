@@ -11,6 +11,7 @@ import pandas as pd
 
 ModoProjecao = Literal[
     "media_simples",
+    "media_casa_fora",
     "repetir_turno",
     "regressao_momento_aceleracao",
     "regressao_momento_historico",
@@ -1658,14 +1659,25 @@ def aplicar_projecoes_media(
     jogos: list[Jogo],
     r_ini: int,
     r_fim: int,
+    *,
+    usar_forma: bool = True,
 ) -> tuple[list[Jogo], pd.DataFrame]:
-    """Média casa/fora × fator forma recente (pts decimais)."""
+    """Média casa/fora; opcionalmente × fator forma recente (pts decimais)."""
     jogos = [Jogo(**j.__dict__) for j in jogos]
     times = times_do_calendario(jogos)
     medias = {
         t: media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante") for t in times
     }
-    fatores = {t: fator_forma_recente(jogos, t, r_ini, r_fim) for t in times}
+    fatores = (
+        {t: fator_forma_recente(jogos, t, r_ini, r_fim) for t in times}
+        if usar_forma
+        else {t: 1.0 for t in times}
+    )
+    origem = (
+        "média casa/fora × forma recente"
+        if usar_forma
+        else "média casa/fora"
+    )
     log_rows: list[dict] = []
 
     for j in sorted(jogos, key=lambda x: (x.r, x.hora, x.mand)):
@@ -1673,7 +1685,7 @@ def aplicar_projecoes_media(
             continue
         pm, pv = projetar_jogo_media(j, medias, fatores)
         j.proj_pm, j.proj_pv = pm, pv
-        j.origem = "média casa/fora × forma recente"
+        j.origem = origem
         log_rows.append(
             {
                 "Rodada": j.r,
@@ -1700,7 +1712,9 @@ def aplicar_projecoes(
             jogos, r_ini, r_fim, MODO_PARA_VARIANTE[modo]
         )
     if modo == "media_simples":
-        return aplicar_projecoes_media(jogos, r_ini, r_fim)
+        return aplicar_projecoes_media(jogos, r_ini, r_fim, usar_forma=True)
+    if modo == "media_casa_fora":
+        return aplicar_projecoes_media(jogos, r_ini, r_fim, usar_forma=False)
 
     jogos = [Jogo(**j.__dict__) for j in jogos]
     mapa = mapa_contrapartidas(jogos)
@@ -1850,25 +1864,30 @@ def tabela_medias_simples_times(
     jogos: list[Jogo],
     r_ini: int,
     r_fim: int,
+    *,
+    usar_forma: bool = True,
 ) -> pd.DataFrame:
-    """Médias de pts/jogo com fator forma e projeção casa/fora."""
+    """Médias de pts/jogo; opcionalmente com fator forma e projeção ajustada."""
     rows: list[dict] = []
     for t in times_do_calendario(jogos):
         m = media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante")
-        fator = fator_forma_recente(jogos, t, r_ini, r_fim)
         media_casa = m.get("casa", m["geral"])
         media_fora = m.get("fora", m["geral"])
-        rows.append(
-            {
-                "Time": t,
-                "Média pts/jogo (geral)": round(m["geral"], 3),
-                "Média pts/jogo (casa)": round(media_casa, 3),
-                "Média pts/jogo (fora)": round(media_fora, 3),
-                "Fator forma (últ. 5 / camp.)": round(fator, 3),
-                "Proj. pts/jogo (casa)": round(media_casa * fator, 3),
-                "Proj. pts/jogo (fora)": round(media_fora * fator, 3),
-            }
-        )
+        row: dict = {
+            "Time": t,
+            "Média pts/jogo (geral)": round(m["geral"], 3),
+            "Média pts/jogo (casa)": round(media_casa, 3),
+            "Média pts/jogo (fora)": round(media_fora, 3),
+        }
+        if usar_forma:
+            fator = fator_forma_recente(jogos, t, r_ini, r_fim)
+            row["Fator forma (últ. 5 / camp.)"] = round(fator, 3)
+            row["Proj. pts/jogo (casa)"] = round(media_casa * fator, 3)
+            row["Proj. pts/jogo (fora)"] = round(media_fora * fator, 3)
+        else:
+            row["Proj. pts/jogo (casa)"] = round(media_casa, 3)
+            row["Proj. pts/jogo (fora)"] = round(media_fora, 3)
+        rows.append(row)
     return pd.DataFrame(rows).sort_values("Time")
 
 

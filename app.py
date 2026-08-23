@@ -213,6 +213,7 @@ _MODO_EFEITOS_FIXOS = (
     "Força dos Adversários Passados (FAP) + Proporção Casa (PC)"
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
+_MODO_MEDIA_CASA_FORA = "Média casa x fora"
 _MODO_TURNO = "Repetir 1º turno"
 
 _modo_opcoes = [
@@ -221,6 +222,7 @@ _modo_opcoes = [
     _MODO_COMPLETA,
     _MODO_EFEITOS_FIXOS,
     _MODO_MEDIA,
+    _MODO_MEDIA_CASA_FORA,
     _MODO_TURNO,
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
@@ -243,6 +245,8 @@ elif modo_label.startswith("Regressão de Efeitos Fixos"):
     variante_acum = "efeitos_fixos"
 elif modo_label == _MODO_MEDIA:
     modo = "media_simples"
+elif modo_label == _MODO_MEDIA_CASA_FORA:
+    modo = "media_casa_fora"
 elif modo_label == _MODO_TURNO:
     modo = "repetir_turno"
 else:
@@ -275,13 +279,19 @@ with st.expander("Detalhes do modelo"):
                 "R²": st.column_config.NumberColumn("R²", format="%.3f"),
             },
         )
-    elif modo == "media_simples":
+    elif modo in ("media_simples", "media_casa_fora"):
+        usar_forma = modo == "media_simples"
         st.caption(
             "Projeção = média pts/jogo em casa ou fora × "
             "média últimos 5 jogos / média campeonato no intervalo."
+            if usar_forma
+            else "Projeção = média pts/jogo em casa (mandante) ou fora (visitante), "
+            "sem ajuste por forma recente."
         )
         st.dataframe(
-            tabela_medias_simples_times(_jogos_base, r_ini_proj, r_fim_proj),
+            tabela_medias_simples_times(
+                _jogos_base, r_ini_proj, r_fim_proj, usar_forma=usar_forma
+            ),
             use_container_width=True,
             hide_index=True,
             column_config={
