@@ -15,6 +15,7 @@ from brasileirao_projecao_core import (
     ModoProjecao,
     TipoRegressao,
     VarianteRegressao,
+    VarianteRegressaoAcumulada,
     aplicar_projecoes,
     carregar_jogos,
     colunas_estatisticas_grafico,
@@ -28,6 +29,7 @@ from brasileirao_projecao_core import (
     mapa_posicao_pontos,
     mapa_vitorias_saldo_proj,
     tabela_regressao_resumo,
+    tabela_regressao_acumulada_resumo,
     tabela_medias_simples_times,
     tabela_jogos_primeiro_turno,
     tabela_comparativa_posicoes,
@@ -200,20 +202,44 @@ _MODO_ROBUSTA = (
     "+ força adversário (média pts/jogo do oponente no intervalo) "
     "+ forma recente (últimos 5 jogos)"
 )
+_MODO_ACUM_SIMPLES = (
+    "Regressão acumulada + simples: "
+    "pts_acumulados ~ rodada + rodada²"
+)
+_MODO_ACUM_ROBUSTA = (
+    "Regressão acumulada + robusta: "
+    "pts_acumulados ~ rodada + rodada² + forma recente (últimos 5 jogos)"
+)
 _MODO_MEDIA = "Média simples casa x fora"
 _MODO_TURNO = "Repetir 1 turno"
 
-_modo_opcoes = [_MODO_SIMPLES, _MODO_ROBUSTA, _MODO_MEDIA, _MODO_TURNO]
+_modo_opcoes = [
+    _MODO_SIMPLES,
+    _MODO_ROBUSTA,
+    _MODO_ACUM_SIMPLES,
+    _MODO_ACUM_ROBUSTA,
+    _MODO_MEDIA,
+    _MODO_TURNO,
+]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
 modo: ModoProjecao
 tipo: TipoRegressao
 variante: VarianteRegressao = "interacao"
+variante_acum: VarianteRegressaoAcumulada = "acum_simples"
 
 if modo_label.startswith("Regressão linear + robusta"):
     modo = "regressao"
     tipo = "mandante_visitante"
     variante = "interacao_adv_turno"
+elif modo_label.startswith("Regressão acumulada + robusta"):
+    modo = "regressao_acum_robusta"
+    tipo = "mandante_visitante"
+    variante_acum = "acum_robusta"
+elif modo_label.startswith("Regressão acumulada + simples"):
+    modo = "regressao_acum_simples"
+    tipo = "mandante_visitante"
+    variante_acum = "acum_simples"
 elif modo_label == _MODO_MEDIA:
     modo = "media_simples"
     tipo = "mandante_visitante"
@@ -226,7 +252,23 @@ else:
     variante = "interacao"
 
 with st.expander("Detalhes do modelo"):
-    if modo == "regressao":
+    if modo in ("regressao_acum_simples", "regressao_acum_robusta"):
+        st.caption(
+            "Curva de pontos acumulados por rodada. Significância: "
+            "*** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
+        )
+        st.dataframe(
+            tabela_regressao_acumulada_resumo(
+                _jogos_base, r_ini_proj, r_fim_proj, variante_acum
+            ),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Time": st.column_config.TextColumn("Time", pinned="left"),
+                "R²": st.column_config.NumberColumn("R²", format="%.3f"),
+            },
+        )
+    elif modo == "regressao":
         st.caption(
             "Significância dos termos: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
