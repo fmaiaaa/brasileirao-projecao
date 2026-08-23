@@ -30,9 +30,9 @@ VarianteRegressaoAcumulada = Literal[
 ]
 
 NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
-    "momento_aceleracao": "Regressão de Momento e Aceleração (FE)",
-    "momento_historico": "Regressão de Momento e Histórico (FE)",
-    "completa": "Regressão Completa (FE)",
+    "momento_aceleracao": "Regressão de Momento e Aceleração (efeitos fixos)",
+    "momento_historico": "Regressão de Momento e Histórico (efeitos fixos)",
+    "completa": "Regressão Completa (efeitos fixos)",
 }
 
 MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
@@ -654,26 +654,25 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
         return [
             "Intercepto",
             "Rodada",
-            "Rodada²",
-            "Rodada×Time",
-            "Rodada²×Time",
+            "Rodada ao Quadrado",
+            "Interação Rodada × Time",
+            "Interação Rodada ao Quadrado × Time",
             "Forma Recente",
         ]
     if variante == "momento_historico":
         return [
             "Intercepto",
             "Rodada",
-            "Rodada×Time",
-            "Rodada²×Time",
+            "Interação Rodada × Time",
             "Proporção Casa",
             "Força dos Adversários Passados",
         ]
     return [
         "Intercepto",
         "Rodada",
-        "Rodada²",
-        "Rodada×Time",
-        "Rodada²×Time",
+        "Rodada ao Quadrado",
+        "Interação Rodada × Time",
+        "Interação Rodada ao Quadrado × Time",
         "Forma Recente",
         "Força dos Adversários Passados",
         "Proporção Casa",
@@ -685,6 +684,8 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
         return {
             "usa_rodada": True,
             "usa_rodada2": True,
+            "usa_interacao_rodada": True,
+            "usa_interacao_rodada2": True,
             "usa_forma": True,
             "usa_prop_casa": False,
             "usa_forca": False,
@@ -693,6 +694,8 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
         return {
             "usa_rodada": True,
             "usa_rodada2": False,
+            "usa_interacao_rodada": True,
+            "usa_interacao_rodada2": False,
             "usa_forma": False,
             "usa_prop_casa": True,
             "usa_forca": True,
@@ -700,6 +703,8 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
     return {
         "usa_rodada": True,
         "usa_rodada2": True,
+        "usa_interacao_rodada": True,
+        "usa_interacao_rodada2": True,
         "usa_forma": True,
         "usa_prop_casa": True,
         "usa_forca": True,
@@ -885,7 +890,7 @@ def _ajustar_regressao_acumulada(
         if rodada_flag:
             nomes.append("Rodada")
         if rodada2_flag:
-            nomes.append("Rodada²")
+            nomes.append("Rodada ao Quadrado")
         if forma_flag:
             nomes.append("Forma Recente")
         if prop_flag:
@@ -1003,9 +1008,10 @@ def _coeficientes_vazios_acumulada(variante: VarianteRegressaoAcumulada) -> dict
         "gamma_rodada": 0.0,
         "gamma_rodada2": 0.0,
         **flags,
-        # interações R×Time / R²×Time sempre ativas na projeção FE
         "usa_rodada": True,
-        "usa_rodada2": True,
+        "usa_rodada2": bool(
+            flags.get("usa_rodada2") or flags.get("usa_interacao_rodada2")
+        ),
         "variante_acum": variante,
         "termos": [],
         "n_obs": 0,
@@ -1060,10 +1066,11 @@ def ajustar_painel_efeitos_fixos(
 ) -> dict:
     """
     Painel FE por variante:
-    PA = αᵢ + β·controles + γ1ᵢ·(R×Time) + γ2ᵢ·(R²×Time)
+    Pontos Acumulados = Efeito Fixo do Time + controles
+    + Interação Rodada × Time (+ Interação Rodada ao Quadrado × Time, se aplicável).
 
-    Controles comuns seguem a variante (R, R², FR, FAP, PC).
-    Identificação: time de referência com γ1=γ2=0.
+    Controles comuns seguem a variante.
+    Identificação: time de referência com interações nulas.
     """
     flags = _flags_regressao_acumulada(variante)
     fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
@@ -1109,30 +1116,33 @@ def ajustar_painel_efeitos_fixos(
     time_ref = times[0]
     non_ref = times[1:]
     r2_arr = r ** 2
+    usa_int_r = flags.get("usa_interacao_rodada", True)
+    usa_int_r2 = flags.get("usa_interacao_rodada2", True)
 
     cols: list[np.ndarray] = []
     nomes: list[str] = []
 
     for t in times:
         cols.append(np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float))
-        nomes.append(f"α[{t}]")
+        nomes.append(f"Efeito Fixo [{t}]")
 
     if flags["usa_rodada"]:
         cols.append(r)
         nomes.append("Rodada")
     if flags["usa_rodada2"]:
         cols.append(r2_arr)
-        nomes.append("Rodada²")
+        nomes.append("Rodada ao Quadrado")
 
-    # Interações sempre (γᵢ; ref com γ=0)
-    for t in non_ref:
-        d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
-        cols.append(r * d)
-        nomes.append(f"Rodada×[{t}]")
-    for t in non_ref:
-        d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
-        cols.append(r2_arr * d)
-        nomes.append(f"Rodada²×[{t}]")
+    if usa_int_r:
+        for t in non_ref:
+            d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
+            cols.append(r * d)
+            nomes.append(f"Interação Rodada × [{t}]")
+    if usa_int_r2:
+        for t in non_ref:
+            d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
+            cols.append(r2_arr * d)
+            nomes.append(f"Interação Rodada ao Quadrado × [{t}]")
 
     if flags["usa_forma"]:
         cols.append(forma)
@@ -1153,13 +1163,13 @@ def ajustar_painel_efeitos_fixos(
             cols.append(
                 np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
             )
-            nomes.append(f"α[{t}]")
+            nomes.append(f"Efeito Fixo [{t}]")
         if flags["usa_rodada"]:
             cols.append(r)
             nomes.append("Rodada")
         if flags["usa_rodada2"]:
             cols.append(r2_arr)
-            nomes.append("Rodada²")
+            nomes.append("Rodada ao Quadrado")
         if flags["usa_forma"]:
             cols.append(forma)
             nomes.append("Forma Recente")
@@ -1171,6 +1181,8 @@ def ajustar_painel_efeitos_fixos(
             nomes.append("Proporção Casa")
         X = np.column_stack(cols)
         non_ref = []
+        usa_int_r = False
+        usa_int_r2 = False
 
     coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
     pvals = _ols_pvalues(X, y, coef)
@@ -1203,18 +1215,20 @@ def ajustar_painel_efeitos_fixos(
         p_b2 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
         idx += 1
 
-    for t in non_ref:
-        por_time[t]["gamma_rodada"] = float(coef[idx])
-        por_time[t]["p_gamma_rodada"] = (
-            round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
-        )
-        idx += 1
-    for t in non_ref:
-        por_time[t]["gamma_rodada2"] = float(coef[idx])
-        por_time[t]["p_gamma_rodada2"] = (
-            round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
-        )
-        idx += 1
+    if usa_int_r:
+        for t in non_ref:
+            por_time[t]["gamma_rodada"] = float(coef[idx])
+            por_time[t]["p_gamma_rodada"] = (
+                round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+            )
+            idx += 1
+    if usa_int_r2:
+        for t in non_ref:
+            por_time[t]["gamma_rodada2"] = float(coef[idx])
+            por_time[t]["p_gamma_rodada2"] = (
+                round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+            )
+            idx += 1
 
     if flags["usa_forma"]:
         b3 = float(coef[idx])
@@ -1282,25 +1296,27 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
         if flags["usa_rodada2"]:
             termos.append(
                 {
-                    "Variável": "Rodada²",
+                    "Variável": "Rodada ao Quadrado",
                     "Beta": round(b2, 4),
                     "p-valor": comum.get("p_rodada2"),
                 }
             )
-        termos.extend(
-            [
+        if flags.get("usa_interacao_rodada", True):
+            termos.append(
                 {
-                    "Variável": "Rodada×Time",
+                    "Variável": "Interação Rodada × Time",
                     "Beta": round(g1, 4),
                     "p-valor": fe.get("p_gamma_rodada"),
-                },
+                }
+            )
+        if flags.get("usa_interacao_rodada2", True):
+            termos.append(
                 {
-                    "Variável": "Rodada²×Time",
+                    "Variável": "Interação Rodada ao Quadrado × Time",
                     "Beta": round(g2, 4),
                     "p-valor": fe.get("p_gamma_rodada2"),
-                },
-            ]
-        )
+                }
+            )
         if flags["usa_forma"]:
             termos.append(
                 {
@@ -1326,18 +1342,21 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
                 }
             )
 
+        usa_r2_proj = bool(
+            flags.get("usa_rodada2") or flags.get("usa_interacao_rodada2")
+        )
         out[t] = {
             "intercept": float(fe["intercept"]),
             # inclinações efetivas (comum + interação)
-            "beta_rodada": b1 + g1,
-            "beta_rodada2": b2 + g2,
+            "beta_rodada": b1 + (g1 if flags.get("usa_interacao_rodada", True) else 0.0),
+            "beta_rodada2": b2 + (g2 if flags.get("usa_interacao_rodada2", True) else 0.0),
             "beta_forma": float(comum["beta_forma"]),
             "beta_forca": float(comum["beta_forca"]),
             "beta_prop_casa": float(comum["beta_prop_casa"]),
-            "gamma_rodada": g1,
-            "gamma_rodada2": g2,
+            "gamma_rodada": g1 if flags.get("usa_interacao_rodada", True) else 0.0,
+            "gamma_rodada2": g2 if flags.get("usa_interacao_rodada2", True) else 0.0,
             "usa_rodada": True,
-            "usa_rodada2": True,
+            "usa_rodada2": usa_r2_proj,
             "usa_forma": flags["usa_forma"],
             "usa_forca": flags["usa_forca"],
             "usa_prop_casa": flags["usa_prop_casa"],

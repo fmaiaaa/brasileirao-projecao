@@ -29,9 +29,9 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 
 Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arredondar para 3/1/0.
 
-1. **Regressão de Momento e Aceleração (FE)** — PA ~ αᵢ + R + R² + (R×Time) + (R²×Time) + FR
-2. **Regressão de Momento e Histórico (FE)** — PA ~ αᵢ + R + (R×Time) + (R²×Time) + PC + FAP
-3. **Regressão Completa (FE)** — PA ~ αᵢ + R + R² + (R×Time) + (R²×Time) + FR + FAP + PC
+1. **Regressão de Momento e Aceleração (efeitos fixos)** — Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + Interação Rodada × Time + Interação Rodada ao Quadrado × Time + Forma Recente
+2. **Regressão de Momento e Histórico (efeitos fixos)** — Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Interação Rodada × Time + Proporção Casa + Força dos Adversários Passados
+3. **Regressão Completa (efeitos fixos)** — Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + Interação Rodada × Time + Interação Rodada ao Quadrado × Time + Forma Recente + Força dos Adversários Passados + Proporção Casa
 4. **Média casa x fora × forma recente**
 5. **Média casa x fora** — só média pts/jogo em casa ou fora (sem forma recente)
 6. **Repetir 1º turno** — espelha ida/volta já disputada; fallback pela média × forma recente

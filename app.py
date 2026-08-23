@@ -193,16 +193,20 @@ r_ini_proj = 1
 r_fim_proj = int(min(_ult_r, 38))
 
 _MODO_MOMENTO_ACELERACAO = (
-    "Regressão de Momento e Aceleração (FE) — "
-    "PA ~ αᵢ + R + R² + (R×Time) + (R²×Time) + FR"
+    "Regressão de Momento e Aceleração (efeitos fixos) — "
+    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + "
+    "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + Forma Recente"
 )
 _MODO_MOMENTO_HISTORICO = (
-    "Regressão de Momento e Histórico (FE) — "
-    "PA ~ αᵢ + R + (R×Time) + (R²×Time) + PC + FAP"
+    "Regressão de Momento e Histórico (efeitos fixos) — "
+    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Interação Rodada × Time + "
+    "Proporção Casa + Força dos Adversários Passados"
 )
 _MODO_COMPLETA = (
-    "Regressão Completa (FE) — "
-    "PA ~ αᵢ + R + R² + (R×Time) + (R²×Time) + FR + FAP + PC"
+    "Regressão Completa (efeitos fixos) — "
+    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + "
+    "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + "
+    "Forma Recente + Força dos Adversários Passados + Proporção Casa"
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
 _MODO_MEDIA_CASA_FORA = "Média casa x fora"
@@ -244,9 +248,10 @@ else:
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
         st.caption(
-            "Modelo de efeitos fixos (αᵢ) com interações Rodada×Time e "
-            "Rodada²×Time (γᵢ; time de referência com γ=0). "
-            "Curva de PA por rodada; cada jogo recebe o delta decimal. "
+            "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
+            "e, quando aplicável, Interação Rodada ao Quadrado × Time "
+            "(time de referência com interações nulas). "
+            "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal. "
             "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
         st.dataframe(
