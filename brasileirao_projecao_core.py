@@ -2204,13 +2204,13 @@ def probabilidades_cenarios_finais(
     seed: int = 42,
 ) -> dict[str, dict[str, float]]:
     """
-    Monte Carlo jogo a jogo, recentrado na projeção decimal do modelo.
+    Monte Carlo jogo a jogo, alinhado à ordem da projeção, com incerteza realista.
 
-    1) Sorteia W/D/L de cada jogo pendente com probs calibradas aos pts
-       esperados (proj_pm / proj_pv).
-    2) Recentra os pontos de cada time para que a média das sims coincida
-       com a pontuação projetada da tabela — assim o líder projetado tende
-       a ter a maior P(campeão), sem o viés do modelo Bradley-Terry antigo.
+    1) Sorteia W/D/L de cada jogo pendente com probs calibradas aos pts esperados.
+    2) Recentra na projeção (com gaps comprimidos) para o líder projetado seguir
+       como favorito, sem odds extremas tipo 95%×4% no meio do campeonato.
+    3) Soma ruído extra ∝ √(jogos restantes) — na prática, ~14 jogos ainda
+       abrem bastante o leque de cenários.
 
     Retorna, por time: campeao, g4, g6, z4 (frações 0–1).
     G4 = 1º–4º | G6 = 1º–6º | Z4 = 17º–20º.
@@ -2229,6 +2229,12 @@ def probabilidades_cenarios_finais(
         [float(mapa_proj.get(t, (0, 0.0))[1]) for t in times], dtype=float
     )
 
+    # Comprime gaps só no cálculo de probabilidade (preserva a ordem da tabela).
+    # Evita campeão “matemático” quando o modelo FE estica demais a pontuação.
+    pts_shrink = 0.62
+    pts_centro = float(pts_proj.mean())
+    pts_target = pts_centro + pts_shrink * (pts_proj - pts_centro)
+
     base = [
         stats_acumuladas_ate(jogos, t, 38, so_realizados=True) for t in times
     ]
@@ -2237,12 +2243,15 @@ def probabilidades_cenarios_finais(
     sg0 = np.array([float(s.sg) for s in base], dtype=float)
     gf0 = np.array([float(s.gf) for s in base], dtype=float)
 
+    n_rest = np.zeros(n_times, dtype=float)
     pendentes: list[tuple[int, int, float, float, float]] = []
     for j in jogos:
         if j.jogado or j.proj_pm is None or j.proj_pv is None:
             continue
         if j.mand not in idx or j.vis not in idx:
             continue
+        n_rest[idx[j.mand]] += 1.0
+        n_rest[idx[j.vis]] += 1.0
         pendentes.append(
             (
                 idx[j.mand],
@@ -2287,7 +2296,6 @@ def probabilidades_cenarios_finais(
     rng = np.random.default_rng(seed)
     u = rng.random((n_sims, n_g))
     cdf = np.cumsum(p_mat, axis=1)
-    # 0 = vit mandante, 1 = empate, 2 = vit visitante
     outcomes = (u[..., None] > cdf[None, :, :]).sum(axis=2).astype(np.int8)
 
     pts = np.tile(pts0, (n_sims, 1))
@@ -2319,9 +2327,15 @@ def probabilidades_cenarios_finais(
         gf[ma, b] += 1.0
         sg[ma, a] -= 1.0
 
-    # Recentra na projeção decimal: E[pts] = pts_proj
+    # Recentra no alvo suavizado (mesma ordem da projeção, gaps menores)
     media = pts.mean(axis=0)
-    pts = pts - media + pts_proj
+    pts = pts - media + pts_target
+
+    # Incerteza residual dos jogos que faltam (ainda ~14 rodadas)
+    sigma_jogo_extra = 2.35
+    sigma_extra = sigma_jogo_extra * np.sqrt(np.maximum(n_rest, 1.0))
+    pts = pts + rng.normal(0.0, 1.0, size=pts.shape) * sigma_extra[None, :]
+    pts = np.maximum(pts, 0.0)
 
     for s in range(n_sims):
         ordem = np.lexsort((-gf[s], -sg[s], -vit[s], -pts[s]))
