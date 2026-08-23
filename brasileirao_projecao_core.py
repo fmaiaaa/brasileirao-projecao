@@ -654,9 +654,9 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
     if variante == "momento_historico":
         return [
             "Intercepto",
-            "Forma Recente",
-            "Força dos Adversários Passados",
+            "Rodada",
             "Proporção Casa",
+            "Força dos Adversários Passados",
         ]
     return [
         "Intercepto",
@@ -679,9 +679,9 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
         }
     if variante == "momento_historico":
         return {
-            "usa_rodada": False,
+            "usa_rodada": True,
             "usa_rodada2": False,
-            "usa_forma": True,
+            "usa_forma": False,
             "usa_prop_casa": True,
             "usa_forca": True,
         }
@@ -856,10 +856,10 @@ def _ajustar_regressao_acumulada(
             cols.append(r ** 2)
         if forma_flag:
             cols.append(forma_arr)
-        if forca_flag:
-            cols.append(forca_arr)
         if prop_flag:
             cols.append(prop)
+        if forca_flag:
+            cols.append(forca_arr)
         return cols
 
     def _nomes(
@@ -876,10 +876,10 @@ def _ajustar_regressao_acumulada(
             nomes.append("Rodada²")
         if forma_flag:
             nomes.append("Forma Recente")
-        if forca_flag:
-            nomes.append("Força dos Adversários Passados")
         if prop_flag:
             nomes.append("Proporção Casa")
+        if forca_flag:
+            nomes.append("Força dos Adversários Passados")
         return nomes
 
     def _extrair_coefs(
@@ -906,10 +906,10 @@ def _ajustar_regressao_acumulada(
             out["beta_rodada2"] = float(coef[idx]); idx += 1
         if forma_flag:
             out["beta_forma"] = float(coef[idx]); idx += 1
-        if forca_flag:
-            out["beta_forca"] = float(coef[idx]); idx += 1
         if prop_flag:
-            out["beta_prop_casa"] = float(coef[idx])
+            out["beta_prop_casa"] = float(coef[idx]); idx += 1
+        if forca_flag:
+            out["beta_forca"] = float(coef[idx])
         return out
 
     if variante == "completa":

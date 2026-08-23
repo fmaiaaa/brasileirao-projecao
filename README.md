@@ -30,7 +30,7 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arredondar para 3/1/0.
 
 1. **Regressão de Momento e Aceleração** — PA ~ R + R² + FR
-2. **Regressão de Momento e Histórico** — PA ~ FR + FAP + PC
+2. **Regressão de Momento e Histórico** — PA ~ R + PC + FAP
 3. **Regressão Completa** — PA ~ R + R² + FR + FAP + PC
 4. **Média casa x fora × forma recente**
 5. **Repetir 1º turno** — espelha ida/volta já disputada; fallback pela média × forma recente

@@ -198,8 +198,8 @@ _MODO_MOMENTO_ACELERACAO = (
 )
 _MODO_MOMENTO_HISTORICO = (
     "Regressão de Momento e Histórico — "
-    "Pontos Acumulados (PA) ~ Forma Recente (FR) + "
-    "Força dos Adversários Passados (FAP) + Proporção Casa (PC)"
+    "Pontos Acumulados (PA) ~ Rodada (R) + Proporção Casa (PC) + "
+    "Força dos Adversários Passados (FAP)"
 )
 _MODO_COMPLETA = (
     "Regressão Completa — "
