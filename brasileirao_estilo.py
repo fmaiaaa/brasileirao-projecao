@@ -202,25 +202,70 @@ def aplicar_estilo() -> None:
             border-radius: 12px;
         }}
         hr {{ border: none; border-top: 1px solid {COR_BORDA}; margin: 1.25rem 0; }}
+        .site-footer {{
+            text-align: center;
+            font-size: 0.72rem;
+            color: {COR_TEXTO_MUTED};
+            opacity: 0.75;
+            margin: 2rem 0 0.5rem 0;
+            font-family: 'Inter', sans-serif;
+            letter-spacing: 0.04em;
+        }}
+        .secao-titulo {{
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            color: {COR_VERDE_ESC};
+            text-align: center;
+            margin: 1.25rem 0 0.85rem 0;
+            font-size: 1.15rem;
+        }}
+        .vel-kpi-row--duo {{
+            display: flex;
+            gap: 12px;
+            margin: 0.35rem 0 0.85rem 0;
+        }}
+        .vel-kpi-row--duo .vel-kpi {{
+            flex: 1 1 50%;
+        }}
+        .vel-kpi-time-label {{
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            color: {COR_VERDE_ESC};
+            text-align: center;
+            margin: 0.75rem 0 0.25rem 0;
+            font-size: 0.95rem;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-def cabecalho_pagina(titulo: str, subtitulo: str) -> None:
+def cabecalho_pagina(titulo: str, subtitulo: str | None = None) -> None:
     import streamlit as st
 
+    sub_html = (
+        f'<p class="ficha-sub">{subtitulo}</p>' if subtitulo else ""
+    )
     st.markdown(
         f"""
         <div class="ficha-hero-stack">
             <div class="ficha-hero">
                 <p class="ficha-title">{titulo}</p>
-                <p class="ficha-sub">{subtitulo}</p>
+                {sub_html}
             </div>
             <div class="ficha-hero-bar" aria-hidden="true"></div>
         </div>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+def rodape_desenvolvedor() -> None:
+    import streamlit as st
+
+    st.markdown(
+        '<p class="site-footer">developed by Lucas Maia</p>',
         unsafe_allow_html=True,
     )
 
@@ -238,3 +283,29 @@ def kpi_row(items: list[tuple[str, str, bool]]) -> None:
         )
     parts.append("</div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def kpi_duo(label_esq: str, val_esq: str, label_dir: str, val_dir: str) -> None:
+    import streamlit as st
+
+    st.markdown(
+        f"""
+        <div class="vel-kpi-row vel-kpi-row--duo">
+            <div class="vel-kpi">
+                <div class="lbl">{label_esq}</div>
+                <div class="val">{val_esq}</div>
+            </div>
+            <div class="vel-kpi">
+                <div class="lbl">{label_dir}</div>
+                <div class="val">{val_dir}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def titulo_secao(texto: str) -> None:
+    import streamlit as st
+
+    st.markdown(f'<p class="secao-titulo">{texto}</p>', unsafe_allow_html=True)

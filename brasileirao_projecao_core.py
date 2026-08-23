@@ -474,9 +474,132 @@ def tabela_betas(
     return pd.DataFrame(rows).sort_values(col_main, ascending=False)
 
 
-# ---------------------------------------------------------------------------
-# Evolução por rodada e gráfico
-# ---------------------------------------------------------------------------
+def kpis_globais(jogos: list[Jogo]) -> dict[str, float]:
+    """Médias de gols e pontos (jogos realizados)."""
+    n_jog = gols_partida = gols_mand = gols_vis = 0
+    pts_mand = pts_vis = 0.0
+
+    for j in jogos:
+        if not j.jogado:
+            continue
+        p = parse_placar(j.placar)
+        if p is None:
+            continue
+        gm, gv = p
+        pm, pv = pontos_placar(gm, gv)
+        n_jog += 1
+        gols_partida += gm + gv
+        gols_mand += gm
+        gols_vis += gv
+        pts_mand += pm
+        pts_vis += pv
+
+    if n_jog == 0:
+        return {
+            "media_gols_jogo": 0.0,
+            "media_gols_mandante": 0.0,
+            "media_gols_visitante": 0.0,
+            "media_pts_mandante": 0.0,
+            "media_pts_visitante": 0.0,
+        }
+    return {
+        "media_gols_jogo": gols_partida / n_jog,
+        "media_gols_mandante": gols_mand / n_jog,
+        "media_gols_visitante": gols_vis / n_jog,
+        "media_pts_mandante": pts_mand / n_jog,
+        "media_pts_visitante": pts_vis / n_jog,
+    }
+
+
+def tabela_estatisticas_times(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+) -> pd.DataFrame:
+    rows = []
+    for time in times_do_calendario(jogos):
+        jr = jp = 0
+        gf = gc = 0
+        gf_c = gc_c = gf_f = gc_f = 0
+        n_c = n_f = 0
+        pts = pts_c = pts_f = 0
+
+        for j in jogos:
+            if j.r < r_ini or j.r > r_fim or time not in (j.mand, j.vis):
+                continue
+            if j.jogado:
+                jr += 1
+                stt = _stats_jogo_para_time(j, time)
+                if not stt:
+                    continue
+                gf += stt.gf
+                gc += stt.gc
+                pts += stt.pts
+                if j.mand == time:
+                    gf_c += stt.gf
+                    gc_c += stt.gc
+                    pts_c += stt.pts
+                    n_c += 1
+                else:
+                    gf_f += stt.gf
+                    gc_f += stt.gc
+                    pts_f += stt.pts
+                    n_f += 1
+            else:
+                jp += 1
+
+        betas = regressao_beta(jogos, time, r_ini, r_fim, "mandante_visitante")
+        rows.append(
+            {
+                "Time": time,
+                "Jogos realizados": jr,
+                "Jogos pendentes": jp,
+                "Total gols marcados": gf,
+                "Total gols sofridos": gc,
+                "Média gols marcados/jogo": round(gf / jr, 3) if jr else 0.0,
+                "Média gols sofridos/jogo": round(gc / jr, 3) if jr else 0.0,
+                "Média gols marcados casa": round(gf_c / n_c, 3) if n_c else 0.0,
+                "Média gols sofridos casa": round(gc_c / n_c, 3) if n_c else 0.0,
+                "Média gols marcados fora": round(gf_f / n_f, 3) if n_f else 0.0,
+                "Média gols sofridos fora": round(gc_f / n_f, 3) if n_f else 0.0,
+                "Total pontos": pts,
+                "Total pts mandante": pts_c,
+                "Total pts visitante": pts_f,
+                "Média pts mandante": round(pts_c / n_c, 3) if n_c else 0.0,
+                "Média pts visitante": round(pts_f / n_f, 3) if n_f else 0.0,
+                "Beta pts/rodada": round(betas["geral"], 3),
+                "Beta pts mandante/rodada": round(betas.get("casa", betas["geral"]), 3),
+                "Beta pts visitante/rodada": round(betas.get("fora", betas["geral"]), 3),
+            }
+        )
+    return pd.DataFrame(rows).sort_values("Total pontos", ascending=False)
+
+
+def tabela_comparativa_posicoes(
+    jogos_base: list[Jogo],
+    jogos_proj: list[Jogo],
+) -> pd.DataFrame:
+    atual = classificacao(jogos_base, incluir_proj=False).rename(
+        columns={"Pos": "Posição Atual", "Pontos": "Pts Atual"}
+    )
+    proj = classificacao(jogos_proj, incluir_proj=True).rename(
+        columns={"Pos": "Posição Projetada", "Pontos": "Pts Projetados"}
+    )
+    df = atual.merge(proj[["Time", "Posição Projetada", "Pts Projetados"]], on="Time")
+    df["Delta"] = df["Posição Atual"] - df["Posição Projetada"]
+    df = df.sort_values("Posição Projetada")
+    df.insert(0, "Posição", range(1, len(df) + 1))
+    return df[
+        ["Posição", "Time", "Posição Atual", "Posição Projetada", "Delta"]
+    ]
+
+
+def mapa_posicao_pontos(
+    jogos: list[Jogo], *, incluir_proj: bool
+) -> dict[str, tuple[int, int]]:
+    df = classificacao(jogos, incluir_proj=incluir_proj)
+    return {row.Time: (int(row.Pos), int(row.Pontos)) for row in df.itertuples()}
+
 
 @dataclass
 class StatsTime:
@@ -689,38 +812,29 @@ def evolucao_pontos_time(
     time: str,
     ult_r: int | None = None,
 ) -> EvolucaoTime:
-    if ult_r is None:
-        ult_r = ultima_rodada_com_resultado(jogos_base)
-
+    del jogos_base, ult_r
     rodadas = list(range(1, 39))
-    pts_conf: list[float] = []
     pts_tot: list[float] = []
-    ac_conf = 0.0
     ac_tot = 0.0
-    estilos: list[bool] = []  # True = tracejado na rodada
+    estilos: list[bool] = []
 
     for r in rodadas:
         j = jogo_do_time_na_rodada(jogos_proj, time, r)
-        d_conf = 0
-        d_proj = 0
+        d_pts = 0
         tracejado = False
 
         if j:
             if j.jogado:
                 st = _stats_jogo_para_time(j, time)
-                d_conf = st.pts if st else 0
+                d_pts = st.pts if st else 0
             elif j.proj_pm is not None:
                 st = _stats_jogo_para_time(j, time)
-                d_proj = st.pts if st else 0
-                if r > ult_r or jogo_faltante_pode_afetar_posicao(jogos_base, time, j):
-                    tracejado = True
+                d_pts = st.pts if st else 0
+                tracejado = True
 
-        ac_conf += d_conf
-        ac_tot += d_conf + d_proj
-        pts_conf.append(ac_conf)
+        ac_tot += d_pts
         pts_tot.append(ac_tot)
-        usa_tracejado = d_proj > 0 and tracejado
-        estilos.append(usa_tracejado)
+        estilos.append(tracejado)
 
     segmentos_linha: list[SegmentoEvolucao] = []
     for idx, r in enumerate(rodadas):
@@ -741,7 +855,7 @@ def evolucao_pontos_time(
     return EvolucaoTime(
         time=time,
         rodadas=rodadas,
-        pts_confirmado=pts_conf,
+        pts_confirmado=pts_tot,
         pts_total=pts_tot,
         segmentos=segmentos_linha,
     )
@@ -769,20 +883,6 @@ def fig_evolucao_times(
 
     for i, ev in enumerate(evolucoes):
         cor = (cores or {}).get(ev.time, palette[i % len(palette)])
-        # confirmado (trace fino)
-        fig.add_trace(
-            go.Scatter(
-                x=ev.rodadas,
-                y=ev.pts_confirmado,
-                mode="lines",
-                name=f"{ev.time} (confirmado)",
-                line=dict(color=cor, width=1, dash="dot"),
-                opacity=0.45,
-                legendgroup=ev.time,
-                showlegend=True,
-            )
-        )
-        # total com trechos sólidos / tracejados
         for j, seg in enumerate(ev.segmentos):
             dash = "dash" if seg.tracejado else "solid"
             fig.add_trace(
