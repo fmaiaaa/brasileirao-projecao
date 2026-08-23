@@ -1,0 +1,712 @@
+"""Lógica de projeção — Brasileirão 2026."""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+import numpy as np
+import pandas as pd
+
+ModoProjecao = Literal["regressao", "repetir_turno"]
+TipoRegressao = Literal["simples", "mandante_visitante"]
+
+_DIR_APP = Path(__file__).resolve().parent
+ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
+
+
+def parse_placar(placar: str) -> tuple[int, int] | None:
+    s = str(placar).strip()
+    if s in ("-", "nan", ""):
+        return None
+    m = re.match(r"(\d+)\s*x\s*(\d+)", s, re.I)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def pontos_placar(gm: int, gv: int) -> tuple[int, int]:
+    if gm > gv:
+        return 3, 0
+    if gm < gv:
+        return 0, 3
+    return 1, 1
+
+
+@dataclass
+class Jogo:
+    r: int
+    data: str
+    hora: str
+    mand: str
+    vis: str
+    placar: str
+    est: str = ""
+    proj_pm: int | None = field(default=None, repr=False)
+    proj_pv: int | None = field(default=None, repr=False)
+    origem: str = field(default="", repr=False)
+
+    @property
+    def jogado(self) -> bool:
+        return parse_placar(self.placar) is not None
+
+    @property
+    def par(self) -> frozenset[str]:
+        return frozenset({self.mand, self.vis})
+
+    def pts_reais(self) -> tuple[int, int] | None:
+        p = parse_placar(self.placar)
+        if p is None:
+            return None
+        return pontos_placar(*p)
+
+    def pts_efetivos(self) -> tuple[int, int]:
+        if self.jogado:
+            return self.pts_reais()  # type: ignore[return-value]
+        if self.proj_pm is not None and self.proj_pv is not None:
+            return self.proj_pm, self.proj_pv
+        return 0, 0
+
+
+def jogos_from_records(records: list[dict]) -> list[Jogo]:
+    return [Jogo(**{k: rec[k] for k in rec}) for rec in records]
+
+
+def carregar_jogos_xlsx(caminho: Path | str | None = None) -> list[Jogo]:
+    """Lê calendário/placares do XLSX em `dados/`."""
+    path = Path(caminho) if caminho else ARQUIVO_CALENDARIO
+    if not path.is_file():
+        raise FileNotFoundError(f"Planilha não encontrada: {path}")
+
+    df = pd.read_excel(path, sheet_name=0)
+    col_map = {
+        "rodada": "Rodada",
+        "data": "Data",
+        "hora": "Hora",
+        "mandante": "Mandante",
+        "placar": "Placar",
+        "visitante": "Visitante",
+        "estadio": "Estadio",
+        "estádio": "Estadio",
+    }
+    norm = {str(c).strip().lower(): c for c in df.columns}
+    records: list[dict] = []
+    for _, row in df.iterrows():
+        rodada_raw = row[norm.get("rodada", "Rodada")]
+        r = int(re.search(r"(\d+)", str(rodada_raw)).group(1))  # type: ignore[union-attr]
+        data = str(row[norm.get("data", "Data")])[:10]
+        hora_val = row.get(norm.get("hora", "Hora"), "")
+        hora = str(hora_val)[:8] if pd.notna(hora_val) else ""
+        mand = str(row[norm.get("mandante", "Mandante")]).strip()
+        vis = str(row[norm.get("visitante", "Visitante")]).strip()
+        placar = str(row[norm.get("placar", "Placar")]).strip()
+        est_col = norm.get("estadio") or norm.get("estádio") or "Estadio"
+        est = str(row[est_col]).strip() if est_col in df.columns and pd.notna(row[est_col]) else ""
+        records.append(
+            {
+                "r": r,
+                "data": data,
+                "hora": hora,
+                "mand": mand,
+                "placar": placar,
+                "vis": vis,
+                "est": est,
+            }
+        )
+    return jogos_from_records(records)
+
+
+def times_do_calendario(jogos: list[Jogo]) -> list[str]:
+    ts = set()
+    for j in jogos:
+        ts.add(j.mand)
+        ts.add(j.vis)
+    return sorted(ts)
+
+
+def regressao_beta(
+    jogos: list[Jogo],
+    time: str,
+    r_ini: int,
+    r_fim: int,
+    tipo: TipoRegressao,
+) -> dict[str, float]:
+    """
+    Retorna betas (pts/rodada) no intervalo [r_ini, r_fim].
+    simples: uma inclinação sobre acumulado por rodada.
+    mandante_visitante: inclinações separadas por mando de campo.
+    """
+    pts_por_r: dict[int, int] = {}
+    pts_casa_por_r: dict[int, int] = {}
+    pts_fora_por_r: dict[int, int] = {}
+
+    for j in jogos:
+        if not j.jogado or j.r < r_ini or j.r > r_fim:
+            continue
+        pm, pv = j.pts_reais()
+        if j.mand == time:
+            pts_por_r[j.r] = pts_por_r.get(j.r, 0) + pm
+            pts_casa_por_r[j.r] = pts_casa_por_r.get(j.r, 0) + pm
+        elif j.vis == time:
+            pts_por_r[j.r] = pts_por_r.get(j.r, 0) + pv
+            pts_fora_por_r[j.r] = pts_fora_por_r.get(j.r, 0) + pv
+
+    def slope_from_round_dict(d: dict[int, int]) -> float:
+        if not d:
+            return 1.0
+        rounds = sorted(d.keys())
+        acum = np.cumsum([d[r] for r in rounds]).astype(float)
+        xs = np.array(rounds, dtype=float)
+        if len(xs) < 2:
+            return float(acum[-1]) / max(len(xs), 1)
+        coef = np.polyfit(xs, acum, 1)
+        return float(coef[0])
+
+    beta_geral = slope_from_round_dict(pts_por_r)
+    if tipo == "simples":
+        return {"geral": max(beta_geral, 0.0)}
+
+    beta_casa = slope_from_round_dict(pts_casa_por_r)
+    beta_fora = slope_from_round_dict(pts_fora_por_r)
+    # fallback se time não jogou em um mando no intervalo
+    if not pts_casa_por_r:
+        beta_casa = beta_geral
+    if not pts_fora_por_r:
+        beta_fora = beta_geral
+    return {
+        "geral": max(beta_geral, 0.0),
+        "casa": max(beta_casa, 0.0),
+        "fora": max(beta_fora, 0.0),
+    }
+
+
+def expected_pts_jogo(
+    time: str,
+    mand: str,
+    betas: dict[str, dict[str, float]],
+    tipo: TipoRegressao,
+) -> float:
+    b = betas.get(time, {"geral": 1.0})
+    if tipo == "simples":
+        return b.get("geral", 1.0)
+    if time == mand:
+        return b.get("casa", b.get("geral", 1.0))
+    return b.get("fora", b.get("geral", 1.0))
+
+
+def projetar_jogo_regressao(
+    jogo: Jogo,
+    betas: dict[str, dict[str, float]],
+    tipo: TipoRegressao,
+) -> tuple[int, int]:
+    em = expected_pts_jogo(jogo.mand, jogo.mand, betas, tipo)
+    ev = expected_pts_jogo(jogo.vis, jogo.mand, betas, tipo)
+    total = em + ev
+    if total <= 0:
+        return 1, 1
+    # converte expectativa contínua em placar 3/1/0 coerente
+    pm_f = 3.0 * em / total
+    pv_f = 3.0 * ev / total
+    pm, pv = round(pm_f), round(pv_f)
+    # ajuste para soma típica (0-3 cada)
+    if pm + pv > 3:
+        scale = 3 / (pm + pv)
+        pm, pv = int(round(pm * scale)), int(round(pv * scale))
+    if pm > 3:
+        pm = 3
+    if pv > 3:
+        pv = 3
+    # desempate por comparação de força
+    if pm > pv:
+        return 3, 0
+    if pv > pm:
+        return 0, 3
+    return 1, 1
+
+
+def mapa_contrapartidas(jogos: list[Jogo]) -> dict[tuple[frozenset[str], str, str], Jogo]:
+    """
+    Chave: (par, mand, vis) identifica confronto orientado.
+    Valor: jogo correspondente no calendário.
+    """
+    m: dict[tuple[frozenset[str], str, str], Jogo] = {}
+    for j in jogos:
+        m[(j.par, j.mand, j.vis)] = j
+    return m
+
+
+def espelhar_contrapartida(jogo_alvo: Jogo, ref: Jogo) -> tuple[int, int]:
+    """Espelha resultado da ida na volta (ou vice-versa)."""
+    parsed = parse_placar(ref.placar)
+    if parsed is None:
+        raise ValueError("referência sem placar")
+    gm_ref, gv_ref = parsed
+    pm_ref, pv_ref = pontos_placar(gm_ref, gv_ref)
+
+    # ref: A mand x B vis -> pontos A=pm_ref, B=pv_ref
+    # alvo: se for B mand x A vis, pontos B=pv_ref, A=pm_ref
+    if jogo_alvo.mand == ref.mand:
+        return pm_ref, pv_ref
+    return pv_ref, pm_ref
+
+
+def media_ppg(jogos: list[Jogo], time: str) -> float:
+    pts, n = 0, 0
+    for j in jogos:
+        if not j.jogado:
+            continue
+        pm, pv = j.pts_reais()
+        if j.mand == time:
+            pts += pm
+            n += 1
+        elif j.vis == time:
+            pts += pv
+            n += 1
+    return pts / n if n else 1.0
+
+
+def aplicar_projecoes(
+    jogos: list[Jogo],
+    modo: ModoProjecao,
+    r_ini: int,
+    r_fim: int,
+    tipo_reg: TipoRegressao,
+) -> tuple[list[Jogo], pd.DataFrame]:
+    jogos = [Jogo(**j.__dict__) for j in jogos]  # cópia
+    times = times_do_calendario(jogos)
+    mapa = mapa_contrapartidas(jogos)
+
+    betas = {
+        t: regressao_beta(jogos, t, r_ini, r_fim, tipo_reg) for t in times
+    }
+
+    log_rows = []
+
+    for j in sorted(jogos, key=lambda x: (x.r, x.hora, x.mand)):
+        if j.jogado:
+            continue
+
+        if modo == "repetir_turno":
+            # contrapartida: mesmo par, mandante/visitante invertidos
+            chave = (j.par, j.vis, j.mand)
+            ref = mapa.get(chave)
+            if ref and ref.jogado:
+                pm, pv = espelhar_contrapartida(j, ref)
+                j.proj_pm, j.proj_pv = pm, pv
+                j.origem = f"espelho R{ref.r} ({ref.mand} {ref.placar} {ref.vis})"
+            else:
+                # sem espelho: usa expectativa por beta (fallback)
+                pm, pv = projetar_jogo_regressao(j, betas, tipo_reg)
+                j.proj_pm, j.proj_pv = pm, pv
+                j.origem = "sem espelho — beta"
+        else:
+            pm, pv = projetar_jogo_regressao(j, betas, tipo_reg)
+            j.proj_pm, j.proj_pv = pm, pv
+            j.origem = "regressão"
+
+        log_rows.append(
+            {
+                "Rodada": j.r,
+                "Mandante": j.mand,
+                "Visitante": j.vis,
+                "Proj": f"{j.proj_pm} / {j.proj_pv}",
+                "Origem": j.origem,
+            }
+        )
+
+    return jogos, pd.DataFrame(log_rows)
+
+
+def classificacao(jogos: list[Jogo], incluir_proj: bool = True) -> pd.DataFrame:
+    pts: dict[str, int] = {t: 0 for t in times_do_calendario(jogos)}
+    jog_real, jog_proj = 0, 0
+
+    for j in jogos:
+        if j.jogado:
+            pm, pv = j.pts_reais()  # type: ignore[misc]
+            jog_real += 1
+        elif incluir_proj and j.proj_pm is not None:
+            pm, pv = j.proj_pm, j.proj_pv
+            jog_proj += 1
+        else:
+            continue
+        pts[j.mand] += pm
+        pts[j.vis] += pv
+
+    df = pd.DataFrame(
+        {"Time": list(pts.keys()), "Pontos": list(pts.values())}
+    ).sort_values(["Pontos", "Time"], ascending=[False, True])
+    df.insert(0, "Pos", range(1, len(df) + 1))
+    df.attrs["jog_real"] = jog_real
+    df.attrs["jog_proj"] = jog_proj
+    return df
+
+
+def tabela_betas(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+    tipo: TipoRegressao,
+) -> pd.DataFrame:
+    rows = []
+    for t in times_do_calendario(jogos):
+        b = regressao_beta(jogos, t, r_ini, r_fim, tipo)
+        row = {"Time": t, "Beta_pts/rodada": round(b["geral"], 3)}
+        if tipo == "mandante_visitante":
+            row["Beta_casa"] = round(b.get("casa", b["geral"]), 3)
+            row["Beta_fora"] = round(b.get("fora", b["geral"]), 3)
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values("Beta_pts/rodada", ascending=False)
+
+
+# ---------------------------------------------------------------------------
+# Evolução por rodada e gráfico
+# ---------------------------------------------------------------------------
+
+@dataclass
+class StatsTime:
+    pts: int = 0
+    vit: int = 0
+    emp: int = 0
+    der: int = 0
+    gf: int = 0
+    gc: int = 0
+
+    @property
+    def sg(self) -> int:
+        return self.gf - self.gc
+
+    def chave_classificacao(self) -> tuple:
+        return (-self.pts, -self.vit, -self.sg, -self.gf)
+
+    def copy(self) -> "StatsTime":
+        return StatsTime(self.pts, self.vit, self.emp, self.der, self.gf, self.gc)
+
+    def add(self, pts: int, gf: int, gc: int) -> None:
+        self.pts += pts
+        self.gf += gf
+        self.gc += gc
+        if pts == 3:
+            self.vit += 1
+        elif pts == 1:
+            self.emp += 1
+        else:
+            self.der += 1
+
+
+def _stats_de_placar(gm: int, gv: int, time: str, mand: str) -> StatsTime:
+    pm, pv = pontos_placar(gm, gv)
+    s = StatsTime()
+    if time == mand:
+        s.add(pm, gm, gv)
+    else:
+        s.add(pv, gv, gm)
+    return s
+
+
+def _stats_extremos_jogo(time: str, jogo: Jogo) -> tuple[StatsTime, StatsTime]:
+    """Melhor e pior cenário (3-0 / 0-3) para o time no jogo pendente."""
+    if time == jogo.mand:
+        return (
+            _stats_de_placar(3, 0, time, jogo.mand),
+            _stats_de_placar(0, 3, time, jogo.mand),
+        )
+    return (
+        _stats_de_placar(0, 3, time, jogo.mand),
+        _stats_de_placar(3, 0, time, jogo.mand),
+    )
+
+
+def _stats_jogo_para_time(jogo: Jogo, time: str) -> StatsTime | None:
+    if time not in (jogo.mand, jogo.vis):
+        return None
+    if jogo.jogado:
+        p = parse_placar(jogo.placar)
+        if p is None:
+            return None
+        return _stats_de_placar(p[0], p[1], time, jogo.mand)
+    if jogo.proj_pm is not None and jogo.proj_pv is not None:
+        pts = jogo.proj_pm if time == jogo.mand else jogo.proj_pv
+        s = StatsTime()
+        if pts == 3:
+            s.add(3, 1, 0)
+        elif pts == 0:
+            s.add(0, 0, 1)
+        else:
+            s.add(1, 1, 1)
+        return s
+    return None
+
+
+def _stats_rodada_time(jogos: list[Jogo], time: str, rodada: int) -> StatsTime:
+    s = StatsTime()
+    for j in jogos:
+        if j.r != rodada:
+            continue
+        if time not in (j.mand, j.vis):
+            continue
+        st = _stats_jogo_para_time(j, time)
+        if st:
+            s.add(st.pts, st.gf, st.gc)
+    return s
+
+
+def stats_acumuladas_ate(
+    jogos: list[Jogo],
+    time: str,
+    rodada: int,
+    *,
+    so_realizados: bool = True,
+) -> StatsTime:
+    total = StatsTime()
+    for r in range(1, rodada + 1):
+        for j in jogos:
+            if j.r != r or time not in (j.mand, j.vis):
+                continue
+            if so_realizados:
+                if not j.jogado:
+                    continue
+                st = _stats_jogo_para_time(j, time)
+            else:
+                if j.jogado:
+                    st = _stats_jogo_para_time(j, time)
+                elif j.proj_pm is not None:
+                    st = _stats_jogo_para_time(j, time)
+                else:
+                    st = None
+            if st:
+                total.add(st.pts, st.gf, st.gc)
+    return total
+
+
+def posicao_time_na_rodada(
+    jogos: list[Jogo],
+    time: str,
+    rodada: int,
+    extra: dict[str, StatsTime] | None = None,
+) -> int:
+    """Posição na tabela ao fim da rodada (só jogos realizados + extras opcionais)."""
+    times = times_do_calendario(jogos)
+    extra = extra or {}
+    linhas = []
+    for t in times:
+        s = stats_acumuladas_ate(jogos, t, rodada, so_realizados=True)
+        if t in extra:
+            e = extra[t]
+            s.add(e.pts, e.gf, e.gc)
+        linhas.append((t, s.chave_classificacao()))
+    linhas.sort(key=lambda x: x[1])
+    for i, (t, _) in enumerate(linhas, 1):
+        if t == time:
+            return i
+    return len(times)
+
+
+def jogo_faltante_pode_afetar_posicao(
+    jogos: list[Jogo],
+    time: str,
+    jogo: Jogo,
+) -> bool:
+    """
+    True se o pior e o melhor desfecho do jogo pendente alteram posição/critério
+    do time ao fim da rodada do jogo (pts, vitórias, saldo, gols pró).
+    """
+    if jogo.jogado or time not in (jogo.mand, jogo.vis):
+        return False
+
+    melhor, pior = _stats_extremos_jogo(time, jogo)
+    pos_melhor = posicao_time_na_rodada(jogos, time, jogo.r, extra={time: melhor})
+    pos_pior = posicao_time_na_rodada(jogos, time, jogo.r, extra={time: pior})
+
+    if pos_melhor != pos_pior:
+        return True
+
+    # empate na posição numérica: compara chave completa com vizinhos
+    times = times_do_calendario(jogos)
+    chaves = {}
+    for cen, label in ((melhor, "m"), (pior, "p")):
+        extra = {time: cen}
+        linhas = []
+        for t in times:
+            s = stats_acumuladas_ate(jogos, t, jogo.r, so_realizados=True)
+            if t in extra:
+                s.add(extra[t].pts, extra[t].gf, extra[t].gc)
+            linhas.append((t, s.chave_classificacao()))
+        linhas.sort(key=lambda x: x[1])
+        chaves[label] = next(k for t, k in linhas if t == time)
+
+    return chaves["m"] != chaves["p"]
+
+
+def ultima_rodada_com_resultado(jogos: list[Jogo]) -> int:
+    jogados = [j.r for j in jogos if j.jogado]
+    return max(jogados) if jogados else 1
+
+
+def jogo_do_time_na_rodada(
+    jogos: list[Jogo], time: str, rodada: int
+) -> Jogo | None:
+    for j in jogos:
+        if j.r == rodada and time in (j.mand, j.vis):
+            return j
+    return None
+
+
+@dataclass
+class SegmentoEvolucao:
+    rodadas: list[int]
+    pontos: list[float]
+    tracejado: bool
+
+
+@dataclass
+class EvolucaoTime:
+    time: str
+    rodadas: list[int]
+    pts_confirmado: list[float]
+    pts_total: list[float]
+    segmentos: list[SegmentoEvolucao]
+
+
+def evolucao_pontos_time(
+    jogos_base: list[Jogo],
+    jogos_proj: list[Jogo],
+    time: str,
+    ult_r: int | None = None,
+) -> EvolucaoTime:
+    if ult_r is None:
+        ult_r = ultima_rodada_com_resultado(jogos_base)
+
+    rodadas = list(range(1, 39))
+    pts_conf: list[float] = []
+    pts_tot: list[float] = []
+    ac_conf = 0.0
+    ac_tot = 0.0
+    estilos: list[bool] = []  # True = tracejado na rodada
+
+    for r in rodadas:
+        j = jogo_do_time_na_rodada(jogos_proj, time, r)
+        d_conf = 0
+        d_proj = 0
+        tracejado = False
+
+        if j:
+            if j.jogado:
+                st = _stats_jogo_para_time(j, time)
+                d_conf = st.pts if st else 0
+            elif j.proj_pm is not None:
+                st = _stats_jogo_para_time(j, time)
+                d_proj = st.pts if st else 0
+                if r > ult_r or jogo_faltante_pode_afetar_posicao(jogos_base, time, j):
+                    tracejado = True
+
+        ac_conf += d_conf
+        ac_tot += d_conf + d_proj
+        pts_conf.append(ac_conf)
+        pts_tot.append(ac_tot)
+        usa_tracejado = d_proj > 0 and tracejado
+        estilos.append(usa_tracejado)
+
+    segmentos_linha: list[SegmentoEvolucao] = []
+    for idx, r in enumerate(rodadas):
+        y = pts_tot[idx]
+        dashed = estilos[idx]
+        if not segmentos_linha or segmentos_linha[-1].tracejado != dashed:
+            if segmentos_linha and idx > 0:
+                prev_r, prev_y = rodadas[idx - 1], pts_tot[idx - 1]
+                segmentos_linha.append(
+                    SegmentoEvolucao([prev_r, r], [prev_y, y], dashed)
+                )
+            else:
+                segmentos_linha.append(SegmentoEvolucao([r], [y], dashed))
+        else:
+            segmentos_linha[-1].rodadas.append(r)
+            segmentos_linha[-1].pontos.append(y)
+
+    return EvolucaoTime(
+        time=time,
+        rodadas=rodadas,
+        pts_confirmado=pts_conf,
+        pts_total=pts_tot,
+        segmentos=segmentos_linha,
+    )
+
+
+def fig_evolucao_times(
+    evolucoes: list[EvolucaoTime],
+    cores: dict[str, str] | None = None,
+):
+    import plotly.graph_objects as go
+
+    palette = [
+        "#14532d",
+        "#15803d",
+        "#ca8a04",
+        "#0f766e",
+        "#b45309",
+        "#166534",
+        "#047857",
+        "#854d0e",
+        "#115e59",
+        "#365314",
+    ]
+    fig = go.Figure()
+
+    for i, ev in enumerate(evolucoes):
+        cor = (cores or {}).get(ev.time, palette[i % len(palette)])
+        # confirmado (trace fino)
+        fig.add_trace(
+            go.Scatter(
+                x=ev.rodadas,
+                y=ev.pts_confirmado,
+                mode="lines",
+                name=f"{ev.time} (confirmado)",
+                line=dict(color=cor, width=1, dash="dot"),
+                opacity=0.45,
+                legendgroup=ev.time,
+                showlegend=True,
+            )
+        )
+        # total com trechos sólidos / tracejados
+        for j, seg in enumerate(ev.segmentos):
+            dash = "dash" if seg.tracejado else "solid"
+            fig.add_trace(
+                go.Scatter(
+                    x=seg.rodadas,
+                    y=seg.pontos,
+                    mode="lines+markers",
+                    name=ev.time if j == 0 else None,
+                    line=dict(color=cor, width=2.5, dash=dash),
+                    marker=dict(size=5),
+                    legendgroup=ev.time,
+                    showlegend=(j == 0),
+                )
+            )
+
+    fig.update_layout(
+        title="Pontuação acumulada por rodada (1–38)",
+        xaxis_title="Rodada",
+        yaxis_title="Pontos acumulados",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        height=520,
+        margin=dict(t=80),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, sans-serif", color="#0f172a"),
+    )
+    fig.update_xaxes(
+        dtick=1,
+        range=[0.5, 38.5],
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
+    )
+    return fig
+
