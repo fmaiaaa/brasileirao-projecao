@@ -2178,6 +2178,141 @@ def mapa_posicao_pontos(
     return {row.Time: (int(row.Pos), float(row.Pontos)) for row in df.itertuples()}
 
 
+def _probs_vitoria_empate_derrota(em: float, ev: float) -> tuple[float, float, float]:
+    """Converte pts esperados mand/vis em P(vitória mandante, empate, vitória visitante)."""
+    xh = max(float(em), 0.05)
+    xv = max(float(ev), 0.05)
+    wh, wd, wa = xh * xh, xh * xv, xv * xv
+    z = wh + wd + wa
+    return wh / z, wd / z, wa / z
+
+
+def probabilidades_cenarios_finais(
+    jogos: list[Jogo],
+    *,
+    n_sims: int = 2500,
+    seed: int = 42,
+) -> dict[str, dict[str, float]]:
+    """
+    Monte Carlo a partir dos pts esperados dos jogos pendentes.
+    Retorna, por time: campeao, g4, g6, z4 (frações 0–1).
+    G4 = 1º–4º | G6 = 1º–6º | Z4 = 17º–20º.
+    """
+    times = times_do_calendario(jogos)
+    n_times = len(times)
+    vazio = {
+        t: {"campeao": 0.0, "g4": 0.0, "g6": 0.0, "z4": 0.0} for t in times
+    }
+    if n_times == 0:
+        return vazio
+
+    idx = {t: i for i, t in enumerate(times)}
+    base = [
+        stats_acumuladas_ate(jogos, t, 38, so_realizados=True) for t in times
+    ]
+    pts0 = np.array([s.pts for s in base], dtype=float)
+    vit0 = np.array([s.vit for s in base], dtype=float)
+    sg0 = np.array([s.sg for s in base], dtype=float)
+    gf0 = np.array([s.gf for s in base], dtype=float)
+
+    pendentes: list[tuple[int, int, float, float, float]] = []
+    for j in jogos:
+        if j.jogado or j.proj_pm is None or j.proj_pv is None:
+            continue
+        pendentes.append(
+            (
+                idx[j.mand],
+                idx[j.vis],
+                *_probs_vitoria_empate_derrota(float(j.proj_pm), float(j.proj_pv)),
+            )
+        )
+
+    camp = np.zeros(n_times, dtype=float)
+    g4 = np.zeros(n_times, dtype=float)
+    g6 = np.zeros(n_times, dtype=float)
+    z4 = np.zeros(n_times, dtype=float)
+
+    if not pendentes:
+        df = classificacao(jogos, incluir_proj=True)
+        for row in df.itertuples():
+            i = idx[row.Time]
+            pos = int(row.Pos)
+            if pos == 1:
+                camp[i] = 1.0
+            if pos <= 4:
+                g4[i] = 1.0
+            if pos <= 6:
+                g6[i] = 1.0
+            if pos >= n_times - 3:
+                z4[i] = 1.0
+        return {
+            t: {
+                "campeao": float(camp[i]),
+                "g4": float(g4[i]),
+                "g6": float(g6[i]),
+                "z4": float(z4[i]),
+            }
+            for t, i in idx.items()
+        }
+
+    n_g = len(pendentes)
+    p_mat = np.array([[ph, pd, pa] for _, _, ph, pd, pa in pendentes], dtype=float)
+    im = np.array([p[0] for p in pendentes], dtype=int)
+    iv = np.array([p[1] for p in pendentes], dtype=int)
+
+    rng = np.random.default_rng(seed)
+    u = rng.random((n_sims, n_g))
+    cdf = np.cumsum(p_mat, axis=1)
+    # 0 = vit mandante, 1 = empate, 2 = vit visitante
+    outcomes = (u[..., None] > cdf[None, :, :]).sum(axis=2).astype(np.int8)
+
+    for s in range(n_sims):
+        pts = pts0.copy()
+        vit = vit0.copy()
+        sg = sg0.copy()
+        gf = gf0.copy()
+        o = outcomes[s]
+        for g in range(n_g):
+            a, b = im[g], iv[g]
+            if o[g] == 0:
+                pts[a] += 3.0
+                vit[a] += 1.0
+                sg[a] += 1.0
+                gf[a] += 1.0
+                sg[b] -= 1.0
+            elif o[g] == 1:
+                pts[a] += 1.0
+                pts[b] += 1.0
+                gf[a] += 1.0
+                gf[b] += 1.0
+            else:
+                pts[b] += 3.0
+                vit[b] += 1.0
+                sg[b] += 1.0
+                gf[b] += 1.0
+                sg[a] -= 1.0
+
+        # ranking: pts → vitórias → saldo → gols
+        ordem = np.lexsort((-gf, -sg, -vit, -pts))
+        pos = np.empty(n_times, dtype=int)
+        pos[ordem] = np.arange(1, n_times + 1)
+        camp[pos == 1] += 1.0
+        g4[pos <= 4] += 1.0
+        g6[pos <= 6] += 1.0
+        z4[pos >= n_times - 3] += 1.0
+
+    inv = float(n_sims)
+    return {
+        t: {
+            "campeao": float(camp[i] / inv),
+            "g4": float(g4[i] / inv),
+            "g6": float(g6[i] / inv),
+            "z4": float(z4[i] / inv),
+        }
+        for t, i in idx.items()
+    }
+
+
 def mapa_vitorias_saldo_proj(
     jogos: list[Jogo],
 ) -> dict[str, tuple[int, int]]:

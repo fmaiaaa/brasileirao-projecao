@@ -262,6 +262,11 @@ def aplicar_estilo() -> None:
             min-width: 0;
             padding: 12px 10px;
         }}
+        .vel-kpi-row--quad .vel-kpi .lbl {{
+            font-size: 0.68rem;
+            line-height: 1.2;
+            min-height: 2.1em;
+        }}
         .vel-kpi-row--quad .vel-kpi .val {{
             font-size: 1.1rem;
         }}
@@ -381,14 +386,22 @@ def bloco_classificacao_time(
     pts_atual: float,
     pos_final: int,
     pts_final: float,
+    *,
+    prob_campeao: float | None = None,
+    prob_g4: float | None = None,
+    prob_g6: float | None = None,
+    prob_z4: float | None = None,
 ) -> None:
-    """Nome do time; abaixo, classificação atual e final projetada."""
+    """Nome do time; classificação atual/final; opcionalmente probs de cenário."""
     import streamlit as st
 
     def _fmt_pts(v: float) -> str:
         return f"{v:.1f}" if abs(v - round(v)) > 0.05 else str(int(round(v)))
 
-    st.markdown(
+    def _fmt_pct(v: float) -> str:
+        return f"{100.0 * v:.1f}%"
+
+    html = (
         '<div class="vel-time-evolucao-block">'
         f'<p class="vel-kpi-time-label">{time}</p>'
         '<div class="vel-kpi-row vel-kpi-row--duo">'
@@ -396,9 +409,23 @@ def bloco_classificacao_time(
         f'<div class="val">{pos_atual}º · {_fmt_pts(pts_atual)} pts</div></div>'
         '<div class="vel-kpi"><div class="lbl">Classificação Final</div>'
         f'<div class="val">{pos_final}º · {_fmt_pts(pts_final)} pts</div></div>'
-        "</div></div>",
-        unsafe_allow_html=True,
+        "</div>"
     )
+    if None not in (prob_campeao, prob_g4, prob_g6, prob_z4):
+        html += (
+            '<div class="vel-kpi-row vel-kpi-row--quad">'
+            '<div class="vel-kpi"><div class="lbl">Probabilidade de ser campeão</div>'
+            f'<div class="val val--accent">{_fmt_pct(prob_campeao)}</div></div>'
+            '<div class="vel-kpi"><div class="lbl">Probabilidade de G4</div>'
+            f'<div class="val">{_fmt_pct(prob_g4)}</div></div>'
+            '<div class="vel-kpi"><div class="lbl">Probabilidade de G6</div>'
+            f'<div class="val">{_fmt_pct(prob_g6)}</div></div>'
+            '<div class="vel-kpi"><div class="lbl">Probabilidade de Z4</div>'
+            f'<div class="val">{_fmt_pct(prob_z4)}</div></div>'
+            "</div>"
+        )
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def titulo_secao(texto: str) -> None:
