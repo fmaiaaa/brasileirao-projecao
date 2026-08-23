@@ -117,7 +117,7 @@ st.dataframe(
 titulo_secao("Gráfico de estatísticas")
 _cols_stats = colunas_estatisticas_grafico(_df_stats)
 _default_times = [t for t in ("Palmeiras", "Flamengo", "Cruzeiro") if t in _times]
-_default_stats = [c for c in ("Total pontos", "Média gols marcados/jogo") if c in _cols_stats]
+_default_stats = [c for c in ("Total pontos", "Média gols marcados") if c in _cols_stats]
 
 c_graf1, c_graf2 = st.columns(2)
 with c_graf1:
@@ -150,7 +150,7 @@ _df_stats_rodada = estatisticas_por_rodada(
 titulo_secao("Gráfico de estatísticas por rodada")
 _cols_stats_rodada = colunas_estatisticas_rodada_grafico(_df_stats_rodada)
 _default_stats_rodada = [
-    c for c in ("Pontos acumulados", "Posição") if c in _cols_stats_rodada
+    c for c in ("Total pontos", "Média gols marcados") if c in _cols_stats_rodada
 ]
 
 c_graf_r1, c_graf_r2 = st.columns(2)

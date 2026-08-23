@@ -1040,68 +1040,134 @@ def kpis_globais(jogos: list[Jogo]) -> dict[str, float]:
     }
 
 
+COLUNAS_ESTATISTICAS_GRAFICO = [
+    "Total gols marcados",
+    "Total gols sofridos",
+    "Média gols marcados",
+    "Média gols sofridos",
+    "Média gols marcados/Média gols sofridos",
+    "Média gols marcados casa",
+    "Média gols sofridos casa",
+    "Média gols marcados casa/Média gols sofridos casa",
+    "Média gols marcados fora",
+    "Média gols sofridos fora",
+    "Média gols marcados fora/Média gols sofridos fora",
+    "Total pontos",
+    "Total pontos mandante",
+    "Total pontos visitante",
+    "Média pontos mandante",
+    "Média pontos visitante",
+]
+
+
+def _ratio_metrica(num: float, den: float) -> float:
+    if den == 0:
+        return float("nan")
+    return round(num / den, 3)
+
+
+def _agregar_stats_time(
+    jogos: list[Jogo],
+    time: str,
+    r_ini: int,
+    r_fim: int,
+) -> dict[str, int]:
+    """Contagens de jogos realizados e gols/pontos no intervalo [r_ini, r_fim]."""
+    jr = jp = 0
+    gf = gc = 0
+    gf_c = gc_c = gf_f = gc_f = 0
+    n_c = n_f = 0
+    pts = pts_c = pts_f = 0
+
+    for j in jogos:
+        if j.r < r_ini or j.r > r_fim or time not in (j.mand, j.vis):
+            continue
+        if j.jogado:
+            jr += 1
+            stt = _stats_jogo_para_time(j, time)
+            if not stt:
+                continue
+            gf += stt.gf
+            gc += stt.gc
+            pts += stt.pts
+            if j.mand == time:
+                gf_c += stt.gf
+                gc_c += stt.gc
+                pts_c += stt.pts
+                n_c += 1
+            else:
+                gf_f += stt.gf
+                gc_f += stt.gc
+                pts_f += stt.pts
+                n_f += 1
+        else:
+            jp += 1
+
+    return {
+        "jr": jr,
+        "jp": jp,
+        "gf": gf,
+        "gc": gc,
+        "gf_c": gf_c,
+        "gc_c": gc_c,
+        "gf_f": gf_f,
+        "gc_f": gc_f,
+        "n_c": n_c,
+        "n_f": n_f,
+        "pts": pts,
+        "pts_c": pts_c,
+        "pts_f": pts_f,
+    }
+
+
+def _metricas_estatisticas_de_agregado(agg: dict[str, int]) -> dict[str, float | int]:
+    jr = agg["jr"]
+    n_c = agg["n_c"]
+    n_f = agg["n_f"]
+    mg = agg["gf"] / jr if jr else 0.0
+    ms = agg["gc"] / jr if jr else 0.0
+    mg_c = agg["gf_c"] / n_c if n_c else 0.0
+    ms_c = agg["gc_c"] / n_c if n_c else 0.0
+    mg_f = agg["gf_f"] / n_f if n_f else 0.0
+    ms_f = agg["gc_f"] / n_f if n_f else 0.0
+    mp_c = agg["pts_c"] / n_c if n_c else 0.0
+    mp_f = agg["pts_f"] / n_f if n_f else 0.0
+
+    return {
+        "Total gols marcados": agg["gf"],
+        "Total gols sofridos": agg["gc"],
+        "Média gols marcados": round(mg, 3),
+        "Média gols sofridos": round(ms, 3),
+        "Média gols marcados/Média gols sofridos": _ratio_metrica(mg, ms),
+        "Média gols marcados casa": round(mg_c, 3),
+        "Média gols sofridos casa": round(ms_c, 3),
+        "Média gols marcados casa/Média gols sofridos casa": _ratio_metrica(mg_c, ms_c),
+        "Média gols marcados fora": round(mg_f, 3),
+        "Média gols sofridos fora": round(ms_f, 3),
+        "Média gols marcados fora/Média gols sofridos fora": _ratio_metrica(mg_f, ms_f),
+        "Total pontos": agg["pts"],
+        "Total pontos mandante": agg["pts_c"],
+        "Total pontos visitante": agg["pts_f"],
+        "Média pontos mandante": round(mp_c, 3),
+        "Média pontos visitante": round(mp_f, 3),
+    }
+
+
 def tabela_estatisticas_times(
     jogos: list[Jogo],
     r_ini: int,
     r_fim: int,
 ) -> pd.DataFrame:
     rows = []
-    forca = mapa_forca_adversario(jogos, r_ini, r_fim)
     for time in times_do_calendario(jogos):
-        jr = jp = 0
-        gf = gc = 0
-        gf_c = gc_c = gf_f = gc_f = 0
-        n_c = n_f = 0
-        pts = pts_c = pts_f = 0
-
-        for j in jogos:
-            if j.r < r_ini or j.r > r_fim or time not in (j.mand, j.vis):
-                continue
-            if j.jogado:
-                jr += 1
-                stt = _stats_jogo_para_time(j, time)
-                if not stt:
-                    continue
-                gf += stt.gf
-                gc += stt.gc
-                pts += stt.pts
-                if j.mand == time:
-                    gf_c += stt.gf
-                    gc_c += stt.gc
-                    pts_c += stt.pts
-                    n_c += 1
-                else:
-                    gf_f += stt.gf
-                    gc_f += stt.gc
-                    pts_f += stt.pts
-                    n_f += 1
-            else:
-                jp += 1
-
-        betas = regressao_beta(jogos, time, r_ini, r_fim, "interacao", forca)
-        rows.append(
-            {
-                "Time": time,
-                "Jogos realizados": jr,
-                "Jogos pendentes": jp,
-                "Total gols marcados": gf,
-                "Total gols sofridos": gc,
-                "Média gols marcados/jogo": round(gf / jr, 3) if jr else 0.0,
-                "Média gols sofridos/jogo": round(gc / jr, 3) if jr else 0.0,
-                "Média gols marcados casa": round(gf_c / n_c, 3) if n_c else 0.0,
-                "Média gols sofridos casa": round(gc_c / n_c, 3) if n_c else 0.0,
-                "Média gols marcados fora": round(gf_f / n_f, 3) if n_f else 0.0,
-                "Média gols sofridos fora": round(gc_f / n_f, 3) if n_f else 0.0,
-                "Total pontos": pts,
-                "Total pts mandante": pts_c,
-                "Total pts visitante": pts_f,
-                "Média pts mandante": round(pts_c / n_c, 3) if n_c else 0.0,
-                "Média pts visitante": round(pts_f / n_f, 3) if n_f else 0.0,
-                "Beta pts/rodada": round(betas["geral"], 3),
-                "Beta pts mandante/rodada": round(betas.get("casa", betas["geral"]), 3),
-                "Beta pts visitante/rodada": round(betas.get("fora", betas["geral"]), 3),
-            }
-        )
+        agg = _agregar_stats_time(jogos, time, r_ini, r_fim)
+        row = {
+            "Time": time,
+            "Jogos realizados": agg["jr"],
+            "Jogos pendentes": agg["jp"],
+        }
+        row.update(_metricas_estatisticas_de_agregado(agg))
+        rows.append(row)
     return pd.DataFrame(rows).sort_values("Total pontos", ascending=False)
 
 
@@ -1605,12 +1671,8 @@ def fig_evolucao_times(
 
 
 def colunas_estatisticas_grafico(df: pd.DataFrame) -> list[str]:
-    """Colunas numéricas disponíveis para o gráfico comparativo."""
-    return [
-        c
-        for c in df.columns
-        if c != "Time" and pd.api.types.is_numeric_dtype(df[c])
-    ]
+    """Métricas disponíveis nos gráficos de estatísticas."""
+    return [c for c in COLUNAS_ESTATISTICAS_GRAFICO if c in df.columns]
 
 
 def fig_estatisticas_times(
@@ -1684,48 +1746,20 @@ def estatisticas_por_rodada(
     r_ini: int,
     r_fim: int,
 ) -> pd.DataFrame:
-    """Métricas acumuladas e da rodada para cada time (realizados)."""
+    """Métricas acumuladas no intervalo [r_ini, r] para cada rodada r."""
     times = times_do_calendario(jogos)
-    pos_por_r: dict[int, dict[str, int]] = {}
-
-    for r in range(r_ini, r_fim + 1):
-        stats_r = {
-            t: stats_acumuladas_ate(jogos, t, r, so_realizados=True) for t in times
-        }
-        ordem = ordenar_stats_desempate(
-            jogos, stats_r, incluir_proj=False, ate_rodada=r
-        )
-        pos_por_r[r] = {t: i for i, (t, _) in enumerate(ordem, 1)}
-
     rows: list[dict] = []
     for time in times:
         for r in range(r_ini, r_fim + 1):
-            acum = stats_acumuladas_ate(jogos, time, r, so_realizados=True)
-            rod = _stats_rodada_time(jogos, time, r)
-            rows.append(
-                {
-                    "Time": time,
-                    "Rodada": r,
-                    "Pontos acumulados": acum.pts,
-                    "Gols marcados (acum.)": acum.gf,
-                    "Gols sofridos (acum.)": acum.gc,
-                    "Saldo de gols (acum.)": acum.sg,
-                    "Vitórias (acum.)": acum.vit,
-                    "Posição": pos_por_r[r].get(time, len(times)),
-                    "Pontos na rodada": rod.pts,
-                    "Gols marcados na rodada": rod.gf,
-                    "Gols sofridos na rodada": rod.gc,
-                }
-            )
+            agg = _agregar_stats_time(jogos, time, r_ini, r)
+            row = {"Time": time, "Rodada": r}
+            row.update(_metricas_estatisticas_de_agregado(agg))
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
 def colunas_estatisticas_rodada_grafico(df: pd.DataFrame) -> list[str]:
-    return [
-        c
-        for c in df.columns
-        if c not in ("Time", "Rodada") and pd.api.types.is_numeric_dtype(df[c])
-    ]
+    return [c for c in COLUNAS_ESTATISTICAS_GRAFICO if c in df.columns]
 
 
 _TICKS_EIXO_POSICAO = [0, 5, 10, 15, 20]
