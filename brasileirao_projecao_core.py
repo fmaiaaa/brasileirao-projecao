@@ -1514,16 +1514,38 @@ def colunas_estatisticas_rodada_grafico(df: pd.DataFrame) -> list[str]:
     ]
 
 
-def _config_eixo_y_posicao(fig, col: str, *, row: int | None = None, col_num: int = 1):
-    """Posição 1 no topo; demais métricas mantêm escala crescente."""
+_TICKS_EIXO_POSICAO = [0, 5, 10, 15, 20]
+
+
+def _kwargs_eixo_y(col: str) -> dict:
     kwargs: dict = {
         "showgrid": True,
         "gridcolor": "rgba(15, 23, 42, 0.08)",
         "zeroline": False,
     }
     if col == "Posição":
-        kwargs["autorange"] = "reversed"
-        kwargs["dtick"] = 1
+        kwargs.update(
+            autorange="reversed",
+            tickmode="array",
+            tickvals=_TICKS_EIXO_POSICAO,
+            ticktext=[str(t) for t in _TICKS_EIXO_POSICAO],
+            range=[-0.5, 20.5],
+        )
+    return kwargs
+
+
+def _config_eixo_y_posicao(
+    fig,
+    col: str,
+    *,
+    row: int | None = None,
+    col_num: int = 1,
+    title_text: str | None = None,
+):
+    """Posição 1 no topo; demais métricas mantêm escala crescente."""
+    kwargs = _kwargs_eixo_y(col)
+    if title_text:
+        kwargs["title_text"] = title_text
     if row is not None:
         fig.update_yaxes(**kwargs, row=row, col=col_num)
     else:
@@ -1623,18 +1645,7 @@ def fig_estatisticas_por_rodada(
                 row=mi + 1,
                 col=1,
             )
-        y_kwargs: dict = {
-            "title_text": col,
-            "row": mi + 1,
-            "col": 1,
-            "showgrid": True,
-            "gridcolor": "rgba(15, 23, 42, 0.08)",
-            "zeroline": False,
-        }
-        if col == "Posição":
-            y_kwargs["autorange"] = "reversed"
-            y_kwargs["dtick"] = 1
-        fig.update_yaxes(**y_kwargs)
+        _config_eixo_y_posicao(fig, col, row=mi + 1, title_text=col)
 
     altura = max(480, 180 * n_met + 120)
     fig.update_layout(
