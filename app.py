@@ -5,8 +5,8 @@ import streamlit as st
 
 from brasileirao_estilo import (
     aplicar_estilo,
+    bloco_classificacao_time,
     cabecalho_pagina,
-    kpi_duo,
     kpi_row,
     rodape_desenvolvedor,
     titulo_secao,
@@ -70,25 +70,31 @@ kpi_row([
 
 titulo_secao("Estatísticas por time (intervalo selecionado)")
 
-c_janela1, c_janela2 = st.columns(2)
-with c_janela1:
-    r_ini = st.number_input(
-        "Rodada início (janela)", min_value=1, max_value=38, value=1, step=1
+c_stats1, c_stats2 = st.columns(2)
+with c_stats1:
+    r_ini_stats = st.number_input(
+        "Rodada início (estatísticas)",
+        min_value=1,
+        max_value=38,
+        value=1,
+        step=1,
+        key="stats_r_ini",
     )
-with c_janela2:
-    r_fim = st.number_input(
-        "Rodada fim (janela)",
+with c_stats2:
+    r_fim_stats = st.number_input(
+        "Rodada fim (estatísticas)",
         min_value=1,
         max_value=38,
         value=int(min(_ult_r, 38)),
         step=1,
+        key="stats_r_fim",
     )
-if r_fim < r_ini:
-    st.warning("Rodada fim menor que início — usando fim = início.")
-    r_fim = r_ini
+if r_fim_stats < r_ini_stats:
+    st.warning("Rodada fim (estatísticas) menor que início — usando fim = início.")
+    r_fim_stats = r_ini_stats
 
 st.dataframe(
-    tabela_estatisticas_times(_jogos_base, int(r_ini), int(r_fim)),
+    tabela_estatisticas_times(_jogos_base, int(r_ini_stats), int(r_fim_stats)),
     use_container_width=True,
     hide_index=True,
 )
@@ -100,6 +106,29 @@ with st.expander("Dados carregados"):
         st.info("Sem preview tabular.")
 
 titulo_secao("Configuração da projeção")
+
+c_proj1, c_proj2 = st.columns(2)
+with c_proj1:
+    r_ini_proj = st.number_input(
+        "Rodada início (projeção)",
+        min_value=1,
+        max_value=38,
+        value=1,
+        step=1,
+        key="proj_r_ini",
+    )
+with c_proj2:
+    r_fim_proj = st.number_input(
+        "Rodada fim (projeção)",
+        min_value=1,
+        max_value=38,
+        value=int(min(_ult_r, 38)),
+        step=1,
+        key="proj_r_fim",
+    )
+if r_fim_proj < r_ini_proj:
+    st.warning("Rodada fim (projeção) menor que início — usando fim = início.")
+    r_fim_proj = r_ini_proj
 
 _modo_opcoes = [
     "Regressão linear — pts ~ rodada + indicador_casa + rodada × indicador_casa",
@@ -123,7 +152,7 @@ else:
     tipo = "mandante_visitante"
 
 jogos_proj, df_log = aplicar_projecoes(
-    _jogos_base, modo, int(r_ini), int(r_fim), tipo
+    _jogos_base, modo, int(r_ini_proj), int(r_fim_proj), tipo
 )
 
 titulo_secao("Classificação")
@@ -151,18 +180,9 @@ if times_graf:
     mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
 
     for time in times_graf:
-        st.markdown(
-            f'<p class="vel-kpi-time-label">{time}</p>',
-            unsafe_allow_html=True,
-        )
         pa, pta = mapa_atual.get(time, (0, 0))
         pf, ptf = mapa_final.get(time, (0, 0))
-        kpi_duo(
-            "Classificação Atual",
-            f"{pa}º · {pta} pts",
-            "Classificação Final",
-            f"{pf}º · {ptf} pts",
-        )
+        bloco_classificacao_time(time, pa, pta, pf, ptf)
 
     evolucoes = [
         evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf

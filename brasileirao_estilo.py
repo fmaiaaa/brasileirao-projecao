@@ -221,11 +221,16 @@ def aplicar_estilo() -> None:
         }}
         .vel-kpi-row--duo {{
             display: flex;
+            flex-wrap: nowrap;
             gap: 12px;
             margin: 0.35rem 0 0.85rem 0;
         }}
         .vel-kpi-row--duo .vel-kpi {{
-            flex: 1 1 50%;
+            flex: 1 1 0;
+            min-width: 0;
+        }}
+        .vel-time-evolucao-block {{
+            margin: 0.5rem 0 1rem 0;
         }}
         .vel-kpi-time-label {{
             font-family: 'Montserrat', sans-serif;
@@ -291,6 +296,29 @@ def kpi_duo(label_esq: str, val_esq: str, label_dir: str, val_dir: str) -> None:
         f'<div class="vel-kpi"><div class="lbl">{label_dir}</div>'
         f'<div class="val">{val_dir}</div></div>'
         "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def bloco_classificacao_time(
+    time: str,
+    pos_atual: int,
+    pts_atual: int,
+    pos_final: int,
+    pts_final: int,
+) -> None:
+    """Nome do time em uma linha; classificação atual e final lado a lado abaixo."""
+    import streamlit as st
+
+    st.markdown(
+        '<div class="vel-time-evolucao-block">'
+        f'<p class="vel-kpi-time-label">{time}</p>'
+        '<div class="vel-kpi-row vel-kpi-row--duo">'
+        '<div class="vel-kpi"><div class="lbl">Classificação Atual</div>'
+        f'<div class="val">{pos_atual}º · {pts_atual} pts</div></div>'
+        '<div class="vel-kpi"><div class="lbl">Classificação Final</div>'
+        f'<div class="val">{pos_final}º · {pts_final} pts</div></div>'
+        "</div></div>",
         unsafe_allow_html=True,
     )
 
