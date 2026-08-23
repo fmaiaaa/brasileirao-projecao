@@ -21,9 +21,11 @@ from brasileirao_projecao_core import (
     estatisticas_por_rodada,
     colunas_estatisticas_rodada_grafico,
     evolucao_pontos_time,
+    evolucao_posicao_time,
     fig_estatisticas_por_rodada,
     fig_estatisticas_times,
     fig_evolucao_times,
+    fig_evolucao_posicao_times,
     kpis_globais,
     mapa_posicao_pontos,
     mapa_vitorias_saldo_proj,
@@ -312,6 +314,11 @@ if times_graf:
         evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
     ]
     st.plotly_chart(fig_evolucao_times(evolucoes), use_container_width=True)
+
+    evolucoes_pos = [
+        evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
+    ]
+    st.plotly_chart(fig_evolucao_posicao_times(evolucoes_pos), use_container_width=True)
 else:
     st.info("Selecione ao menos um time para exibir o gráfico.")
 

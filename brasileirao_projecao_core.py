@@ -2150,6 +2150,73 @@ def evolucao_pontos_time(
     )
 
 
+def _posicao_time_classificacao_ate(
+    jogos: list[Jogo],
+    time: str,
+    rodada: int,
+    *,
+    incluir_proj: bool,
+) -> int:
+    linhas = ordenar_times_desempate(
+        jogos, incluir_proj=incluir_proj, ate_rodada=rodada
+    )
+    for i, (t, _) in enumerate(linhas, 1):
+        if t == time:
+            return i
+    return len(linhas)
+
+
+def evolucao_posicao_time(
+    jogos_base: list[Jogo],
+    jogos_proj: list[Jogo],
+    time: str,
+    ult_r: int | None = None,
+) -> EvolucaoTime:
+    """Posição na tabela ao fim de cada rodada (real e com projeção)."""
+    del jogos_base, ult_r
+    rodadas = list(range(1, 39))
+    pos_conf: list[float] = []
+    pos_tot: list[float] = []
+    estilos: list[bool] = []
+
+    for r in rodadas:
+        j = jogo_do_time_na_rodada(jogos_proj, time, r)
+        tracejado = bool(
+            j and not j.jogado and j.proj_pm is not None
+        )
+        pos_conf.append(
+            float(_posicao_time_classificacao_ate(jogos_proj, time, r, incluir_proj=False))
+        )
+        pos_tot.append(
+            float(_posicao_time_classificacao_ate(jogos_proj, time, r, incluir_proj=True))
+        )
+        estilos.append(tracejado)
+
+    segmentos_linha: list[SegmentoEvolucao] = []
+    for idx, r in enumerate(rodadas):
+        y = pos_tot[idx]
+        dashed = estilos[idx]
+        if not segmentos_linha or segmentos_linha[-1].tracejado != dashed:
+            if segmentos_linha and idx > 0:
+                prev_r, prev_y = rodadas[idx - 1], pos_tot[idx - 1]
+                segmentos_linha.append(
+                    SegmentoEvolucao([prev_r, r], [prev_y, y], dashed)
+                )
+            else:
+                segmentos_linha.append(SegmentoEvolucao([r], [y], dashed))
+        else:
+            segmentos_linha[-1].rodadas.append(r)
+            segmentos_linha[-1].pontos.append(y)
+
+    return EvolucaoTime(
+        time=time,
+        rodadas=rodadas,
+        pts_confirmado=pos_conf,
+        pts_total=pos_tot,
+        segmentos=segmentos_linha,
+    )
+
+
 def fig_evolucao_times(
     evolucoes: list[EvolucaoTime],
     cores: dict[str, str] | None = None,
@@ -2225,6 +2292,77 @@ def fig_evolucao_times(
         gridcolor="rgba(15, 23, 42, 0.08)",
         zeroline=False,
     )
+    return fig
+
+
+def fig_evolucao_posicao_times(
+    evolucoes: list[EvolucaoTime],
+    cores: dict[str, str] | None = None,
+):
+    import plotly.graph_objects as go
+
+    palette = [
+        "#14532d",
+        "#15803d",
+        "#ca8a04",
+        "#0f766e",
+        "#b45309",
+        "#166534",
+        "#047857",
+        "#854d0e",
+        "#115e59",
+        "#365314",
+    ]
+    fig = go.Figure()
+
+    for i, ev in enumerate(evolucoes):
+        cor = (cores or {}).get(ev.time, palette[i % len(palette)])
+        hover_tpl = (
+            f"{ev.time} - Posição confirmada: %{{customdata[0]:.0f}}º<br>"
+            f"{ev.time} - Posição projetada: %{{customdata[1]:.0f}}º"
+            "<extra></extra>"
+        )
+        for j, seg in enumerate(ev.segmentos):
+            dash = "dash" if seg.tracejado else "solid"
+            cd = [
+                [ev.pts_confirmado[r - 1], ev.pts_total[r - 1]]
+                for r in seg.rodadas
+            ]
+            fig.add_trace(
+                go.Scatter(
+                    x=seg.rodadas,
+                    y=seg.pontos,
+                    mode="lines+markers",
+                    name=ev.time,
+                    line=dict(color=cor, width=2.5, dash=dash),
+                    marker=dict(size=5, color=cor),
+                    legendgroup=ev.time,
+                    showlegend=(j == 0),
+                    customdata=cd,
+                    hovertemplate=hover_tpl,
+                )
+            )
+
+    fig.update_layout(
+        title="Posição na classificação por rodada (1–38)",
+        xaxis_title="Rodada",
+        yaxis_title="Posição",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        height=520,
+        margin=dict(t=80),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, sans-serif", color="#0f172a"),
+    )
+    fig.update_xaxes(
+        dtick=1,
+        range=[0.5, 38.5],
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
+    )
+    _config_eixo_y_posicao(fig, "Posição")
     return fig
 
 
