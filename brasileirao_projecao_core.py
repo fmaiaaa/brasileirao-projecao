@@ -315,6 +315,7 @@ def _ajustar_regressao(
     usa_forca = variante == "interacao_adv_turno"
     usa_turno = variante == "interacao_adv_turno"
     usa_forma = variante == "interacao_adv_turno"
+    usa_rodada2 = variante == "interacao_adv_turno"
 
     n = len(y)
     if n == 0:
@@ -329,9 +330,12 @@ def _ajustar_regressao(
         forca: bool,
         turno_flag: bool,
         forma_flag: bool,
+        rodada2_flag: bool,
         casa_flag: bool,
     ):
         cols = [np.ones(n), r]
+        if rodada2_flag:
+            cols.append(r ** 2)
         if casa_flag:
             cols.append(casa.astype(float))
         if interacao:
@@ -352,12 +356,15 @@ def _ajustar_regressao(
         forca: bool,
         turno_flag: bool,
         forma_flag: bool,
+        rodada2_flag: bool,
         casa_flag: bool,
     ):
         idx = 0
         b0 = float(coef[idx]); idx += 1
         b1 = float(coef[idx]); idx += 1
-        b2 = b3 = b4 = b5 = b6 = 0.0
+        b_r2 = b2 = b3 = b4 = b5 = b6 = 0.0
+        if rodada2_flag:
+            b_r2 = float(coef[idx]); idx += 1
         if casa_flag:
             b2 = float(coef[idx]); idx += 1
         if interacao:
@@ -368,35 +375,37 @@ def _ajustar_regressao(
             b5 = float(coef[idx]); idx += 1
         if forma_flag:
             b6 = float(coef[idx])
-        return b0, b1, b2, b3, b4, b5, b6
+        return b0, b1, b_r2, b2, b3, b4, b5, b6
 
     tentativas = [
-        (usa_interacao, usa_forca, usa_turno, usa_forma, True),
-        (usa_interacao, usa_forca, usa_turno, False, True),
-        (usa_interacao, False, usa_turno, False, True),
-        (usa_interacao, False, False, False, True),
-        (False, False, False, False, True),
-        (False, False, False, False, False),
+        (usa_interacao, usa_forca, usa_turno, usa_forma, usa_rodada2, True),
+        (usa_interacao, usa_forca, usa_turno, usa_forma, False, True),
+        (usa_interacao, usa_forca, usa_turno, False, False, True),
+        (usa_interacao, False, usa_turno, False, False, True),
+        (usa_interacao, False, False, False, False, True),
+        (False, False, False, False, False, True),
+        (False, False, False, False, False, False),
     ]
-    seen: set[tuple[bool, bool, bool, bool, bool]] = set()
-    b0, b1, b2, b3, b4, b5, b6 = b0_g, b1_g, 0.0, 0.0, 0.0, 0.0, 0.0
-    fit_interacao = fit_forca = fit_turno = fit_forma = fit_casa = usa_interacao
-    for interacao, forca, turno_flag, forma_flag, casa_flag in tentativas:
-        key = (interacao, forca, turno_flag, forma_flag, casa_flag)
+    seen: set[tuple[bool, bool, bool, bool, bool, bool]] = set()
+    b0, b1, b_r2, b2, b3, b4, b5, b6 = b0_g, b1_g, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    fit_interacao = fit_forca = fit_turno = fit_forma = fit_rodada2 = fit_casa = usa_interacao
+    for interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag in tentativas:
+        key = (interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag)
         if key in seen:
             continue
         seen.add(key)
-        cols = _montar(interacao, forca, turno_flag, forma_flag, casa_flag)
+        cols = _montar(interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag)
         if n < len(cols):
             continue
         coef, _, _, _ = np.linalg.lstsq(np.column_stack(cols), y.astype(float), rcond=None)
-        b0, b1, b2, b3, b4, b5, b6 = _extrair(
-            coef, interacao, forca, turno_flag, forma_flag, casa_flag
+        b0, b1, b_r2, b2, b3, b4, b5, b6 = _extrair(
+            coef, interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag
         )
         fit_interacao = interacao
         fit_forca = forca
         fit_turno = turno_flag
         fit_forma = forma_flag
+        fit_rodada2 = rodada2_flag
         fit_casa = casa_flag
         break
 
@@ -406,6 +415,7 @@ def _ajustar_regressao(
         "fora": max(b1, 0.0),
         "intercept": b0,
         "beta_rodada": b1,
+        "beta_rodada2": b_r2 if fit_rodada2 else 0.0,
         "beta_casa_ind": b2 if fit_casa else 0.0,
         "beta_interacao": b3 if fit_interacao else 0.0,
         "beta_forca": b4 if fit_forca else 0.0,
@@ -417,6 +427,7 @@ def _ajustar_regressao(
         "usa_forca": fit_forca,
         "usa_turno": fit_turno,
         "usa_forma": fit_forma,
+        "usa_rodada2": fit_rodada2,
     }
 
 
@@ -430,6 +441,7 @@ def _coeficientes_vazios(
         "fora": padrao,
         "intercept": padrao,
         "beta_rodada": 0.0,
+        "beta_rodada2": 0.0,
         "beta_casa_ind": 0.0,
         "beta_interacao": 0.0,
         "beta_forca": 0.0,
@@ -441,6 +453,7 @@ def _coeficientes_vazios(
         "usa_forca": variante == "interacao_adv_turno",
         "usa_turno": variante == "interacao_adv_turno",
         "usa_forma": variante == "interacao_adv_turno",
+        "usa_rodada2": variante == "interacao_adv_turno",
     }
 
 
@@ -455,6 +468,8 @@ def _prever_regressao(
     r = float(rodada)
     casa = 1.0 if em_casa else 0.0
     val = b["intercept"] + b["beta_rodada"] * r
+    if b.get("usa_rodada2"):
+        val += b.get("beta_rodada2", 0.0) * r * r
     if b.get("usa_casa"):
         val += b.get("beta_casa_ind", 0.0) * casa
     if b.get("usa_interacao"):

@@ -193,7 +193,7 @@ _MODO_SIMPLES = (
 )
 _MODO_ROBUSTA = (
     "Regressão linear + robusta: "
-    "pts ~ rodada + indicador_casa + rodada × indicador_casa "
+    "pts ~ rodada + rodada² + indicador_casa + rodada × indicador_casa "
     "+ força adversário (média pts/jogo do oponente no intervalo) + turno "
     "+ forma recente (últimos 5 jogos)"
 )
