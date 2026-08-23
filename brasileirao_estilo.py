@@ -244,21 +244,17 @@ def aplicar_estilo() -> None:
 def cabecalho_pagina(titulo: str, subtitulo: str | None = None) -> None:
     import streamlit as st
 
-    sub_html = (
-        f'<p class="ficha-sub">{subtitulo}</p>' if subtitulo else ""
-    )
-    st.markdown(
-        f"""
-        <div class="ficha-hero-stack">
-            <div class="ficha-hero">
-                <p class="ficha-title">{titulo}</p>
-                {sub_html}
-            </div>
-            <div class="ficha-hero-bar" aria-hidden="true"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    partes = [
+        '<div class="ficha-hero-stack">',
+        '<div class="ficha-hero">',
+        f'<p class="ficha-title">{titulo}</p>',
+    ]
+    if subtitulo:
+        partes.append(f'<p class="ficha-sub">{subtitulo}</p>')
+    partes.append("</div>")
+    partes.append('<div class="ficha-hero-bar" aria-hidden="true"></div>')
+    partes.append("</div>")
+    st.markdown("".join(partes), unsafe_allow_html=True)
 
 
 def rodape_desenvolvedor() -> None:
@@ -289,18 +285,12 @@ def kpi_duo(label_esq: str, val_esq: str, label_dir: str, val_dir: str) -> None:
     import streamlit as st
 
     st.markdown(
-        f"""
-        <div class="vel-kpi-row vel-kpi-row--duo">
-            <div class="vel-kpi">
-                <div class="lbl">{label_esq}</div>
-                <div class="val">{val_esq}</div>
-            </div>
-            <div class="vel-kpi">
-                <div class="lbl">{label_dir}</div>
-                <div class="val">{val_dir}</div>
-            </div>
-        </div>
-        """,
+        '<div class="vel-kpi-row vel-kpi-row--duo">'
+        f'<div class="vel-kpi"><div class="lbl">{label_esq}</div>'
+        f'<div class="val">{val_esq}</div></div>'
+        f'<div class="vel-kpi"><div class="lbl">{label_dir}</div>'
+        f'<div class="val">{val_dir}</div></div>'
+        "</div>",
         unsafe_allow_html=True,
     )
 

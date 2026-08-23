@@ -418,7 +418,6 @@ def aplicar_projecoes(
                 "Mandante": j.mand,
                 "Visitante": j.vis,
                 "Proj": f"{j.proj_pm} / {j.proj_pv}",
-                "Origem": j.origem,
             }
         )
 
@@ -814,25 +813,30 @@ def evolucao_pontos_time(
 ) -> EvolucaoTime:
     del jogos_base, ult_r
     rodadas = list(range(1, 39))
+    pts_conf: list[float] = []
     pts_tot: list[float] = []
+    ac_conf = 0.0
     ac_tot = 0.0
     estilos: list[bool] = []
 
     for r in rodadas:
         j = jogo_do_time_na_rodada(jogos_proj, time, r)
-        d_pts = 0
+        d_real = 0
+        d_proj = 0
         tracejado = False
 
         if j:
             if j.jogado:
                 st = _stats_jogo_para_time(j, time)
-                d_pts = st.pts if st else 0
+                d_real = st.pts if st else 0
             elif j.proj_pm is not None:
                 st = _stats_jogo_para_time(j, time)
-                d_pts = st.pts if st else 0
+                d_proj = st.pts if st else 0
                 tracejado = True
 
-        ac_tot += d_pts
+        ac_conf += d_real
+        ac_tot += d_real + d_proj
+        pts_conf.append(ac_conf)
         pts_tot.append(ac_tot)
         estilos.append(tracejado)
 
@@ -855,7 +859,7 @@ def evolucao_pontos_time(
     return EvolucaoTime(
         time=time,
         rodadas=rodadas,
-        pts_confirmado=pts_tot,
+        pts_confirmado=pts_conf,
         pts_total=pts_tot,
         segmentos=segmentos_linha,
     )
@@ -883,18 +887,32 @@ def fig_evolucao_times(
 
     for i, ev in enumerate(evolucoes):
         cor = (cores or {}).get(ev.time, palette[i % len(palette)])
+        hover_tpl = (
+            f"{ev.time} - Pontuação atual: %{{customdata[0]}}<br>"
+            f"{ev.time} - Pontuação Projetada da Rodada: %{{customdata[1]}}"
+            "<extra></extra>"
+        )
         for j, seg in enumerate(ev.segmentos):
             dash = "dash" if seg.tracejado else "solid"
+            cd = [
+                [
+                    int(ev.pts_confirmado[r - 1]),
+                    int(ev.pts_total[r - 1]),
+                ]
+                for r in seg.rodadas
+            ]
             fig.add_trace(
                 go.Scatter(
                     x=seg.rodadas,
                     y=seg.pontos,
                     mode="lines+markers",
-                    name=ev.time if j == 0 else None,
+                    name=ev.time,
                     line=dict(color=cor, width=2.5, dash=dash),
-                    marker=dict(size=5),
+                    marker=dict(size=5, color=cor),
                     legendgroup=ev.time,
                     showlegend=(j == 0),
+                    customdata=cd,
+                    hovertemplate=hover_tpl,
                 )
             )
 

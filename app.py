@@ -171,16 +171,22 @@ if times_graf:
     mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
     mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
 
-    for time in times_graf:
-        st.markdown(f'<p class="vel-kpi-time-label">{time}</p>', unsafe_allow_html=True)
-        pa, pta = mapa_atual.get(time, (0, 0))
-        pf, ptf = mapa_final.get(time, (0, 0))
-        kpi_duo(
-            "Classificação Atual",
-            f"{pa}º · {pta} pts",
-            "Classificação Final",
-            f"{pf}º · {ptf} pts",
-        )
+    for i in range(0, len(times_graf), 2):
+        cols = st.columns(2)
+        for col, time in zip(cols, times_graf[i : i + 2]):
+            with col:
+                st.markdown(
+                    f'<p class="vel-kpi-time-label">{time}</p>',
+                    unsafe_allow_html=True,
+                )
+                pa, pta = mapa_atual.get(time, (0, 0))
+                pf, ptf = mapa_final.get(time, (0, 0))
+                kpi_duo(
+                    "Classificação Atual",
+                    f"{pa}º · {pta} pts",
+                    "Classificação Final",
+                    f"{pf}º · {ptf} pts",
+                )
 
     evolucoes = [
         evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
