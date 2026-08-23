@@ -15,6 +15,7 @@ ModoProjecao = Literal[
     "regressao_momento_aceleracao",
     "regressao_momento_historico",
     "regressao_completa",
+    "regressao_efeitos_fixos",
 ]
 TipoRegressao = Literal["simples", "mandante_visitante"]
 VarianteRegressao = Literal[
@@ -26,18 +27,21 @@ VarianteRegressaoAcumulada = Literal[
     "momento_aceleracao",
     "momento_historico",
     "completa",
+    "efeitos_fixos",
 ]
 
 NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
     "momento_aceleracao": "Regressão de Momento e Aceleração",
     "momento_historico": "Regressão de Momento e Histórico",
     "completa": "Regressão Completa",
+    "efeitos_fixos": "Regressão de Efeitos Fixos",
 }
 
 MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
     "regressao_momento_aceleracao": "momento_aceleracao",
     "regressao_momento_historico": "momento_historico",
     "regressao_completa": "completa",
+    "regressao_efeitos_fixos": "efeitos_fixos",
 }
 
 
@@ -658,6 +662,17 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
             "Proporção Casa",
             "Força dos Adversários Passados",
         ]
+    if variante == "efeitos_fixos":
+        return [
+            "Intercepto",
+            "Rodada",
+            "Rodada²",
+            "Rodada×Time",
+            "Rodada²×Time",
+            "Forma Recente",
+            "Força dos Adversários Passados",
+            "Proporção Casa",
+        ]
     return [
         "Intercepto",
         "Rodada",
@@ -685,6 +700,7 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_prop_casa": True,
             "usa_forca": True,
         }
+    # completa e efeitos_fixos
     return {
         "usa_rodada": True,
         "usa_rodada2": True,
@@ -996,6 +1012,291 @@ def _coeficientes_vazios_acumulada(variante: VarianteRegressaoAcumulada) -> dict
     }
 
 
+def _coletar_painel_efeitos_fixos(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+    forca_map: dict[str, float],
+) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Painel time×rodada: Y=PA, R, PC, FAP, FR."""
+    times_obs: list[str] = []
+    rodadas: list[float] = []
+    y_vals: list[float] = []
+    props: list[float] = []
+    forcas: list[float] = []
+    formas: list[float] = []
+
+    for time in times_do_calendario(jogos):
+        for r in range(r_ini, r_fim + 1):
+            jogo_r = jogo_do_time_na_rodada(jogos, time, r)
+            if jogo_r is None or not jogo_r.jogado:
+                continue
+            acum = stats_acumuladas_ate(jogos, time, r, so_realizados=True)
+            n_casa, n_fora = _contagem_casa_fora_ate(jogos, time, r)
+            times_obs.append(time)
+            rodadas.append(float(r))
+            y_vals.append(float(acum.pts))
+            props.append(_proporcao_casa(n_casa, n_fora))
+            forcas.append(_forca_oponentes_passados(jogos, time, r + 1, forca_map))
+            formas.append(forma_recente_ate(jogos, time, r, jogo_r.hora))
+
+    return (
+        times_obs,
+        np.array(rodadas, dtype=float),
+        np.array(y_vals, dtype=float),
+        np.array(props, dtype=float),
+        np.array(forcas, dtype=float),
+        np.array(formas, dtype=float),
+    )
+
+
+def ajustar_painel_efeitos_fixos(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+    forca_map: dict[str, float] | None = None,
+) -> dict:
+    """
+    PA = αᵢ + β1·R + β2·R² + γ1ᵢ·(R×Time) + γ2ᵢ·(R²×Time)
+         + β3·FR + β4·FAP + β5·PC
+
+    Identificação: time de referência com γ1=γ2=0 (primeiro em ordem alfabética).
+    """
+    fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
+    times = times_do_calendario(jogos)
+    times_obs, r, y, prop, forca, forma = _coletar_painel_efeitos_fixos(
+        jogos, r_ini, r_fim, fm
+    )
+    n = len(y)
+    if n == 0 or not times:
+        return {
+            "times": times,
+            "time_ref": times[0] if times else "",
+            "r2": None,
+            "n_obs": 0,
+            "comum": {
+                "beta_rodada": 0.0,
+                "beta_rodada2": 0.0,
+                "beta_forma": 0.0,
+                "beta_forca": 0.0,
+                "beta_prop_casa": 0.0,
+                "p_rodada": None,
+                "p_rodada2": None,
+                "p_forma": None,
+                "p_forca": None,
+                "p_prop_casa": None,
+            },
+            "por_time": {
+                t: {
+                    "intercept": 1.0,
+                    "gamma_rodada": 0.0,
+                    "gamma_rodada2": 0.0,
+                    "p_intercept": None,
+                    "p_gamma_rodada": None,
+                    "p_gamma_rodada2": None,
+                }
+                for t in times
+            },
+        }
+
+    time_ref = times[0]
+    non_ref = times[1:]
+    r2 = r ** 2
+
+    cols: list[np.ndarray] = []
+    nomes: list[str] = []
+
+    for t in times:
+        cols.append(np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float))
+        nomes.append(f"α[{t}]")
+
+    cols.append(r)
+    nomes.append("Rodada")
+    cols.append(r2)
+    nomes.append("Rodada²")
+
+    for t in non_ref:
+        d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
+        cols.append(r * d)
+        nomes.append(f"Rodada×[{t}]")
+    for t in non_ref:
+        d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
+        cols.append(r2 * d)
+        nomes.append(f"Rodada²×[{t}]")
+
+    cols.append(forma)
+    nomes.append("Forma Recente")
+    cols.append(forca)
+    nomes.append("Força dos Adversários Passados")
+    cols.append(prop)
+    nomes.append("Proporção Casa")
+
+    X = np.column_stack(cols)
+    if n < X.shape[1]:
+        # fallback: só αᵢ + R + R² + controles (sem interações)
+        cols = []
+        nomes = []
+        for t in times:
+            cols.append(
+                np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
+            )
+            nomes.append(f"α[{t}]")
+        cols.extend([r, r2, forma, forca, prop])
+        nomes.extend(
+            [
+                "Rodada",
+                "Rodada²",
+                "Forma Recente",
+                "Força dos Adversários Passados",
+                "Proporção Casa",
+            ]
+        )
+        X = np.column_stack(cols)
+        non_ref = []
+
+    coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+    pvals = _ols_pvalues(X, y, coef)
+    r2_fit = _ols_r2(X, y, coef)
+
+    idx = 0
+    por_time: dict[str, dict] = {}
+    for t in times:
+        por_time[t] = {
+            "intercept": float(coef[idx]),
+            "gamma_rodada": 0.0,
+            "gamma_rodada2": 0.0,
+            "p_intercept": (
+                round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+            ),
+            "p_gamma_rodada": None,
+            "p_gamma_rodada2": None,
+        }
+        idx += 1
+
+    b1 = float(coef[idx])
+    p_b1 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+    idx += 1
+    b2 = float(coef[idx])
+    p_b2 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+    idx += 1
+
+    for t in non_ref:
+        por_time[t]["gamma_rodada"] = float(coef[idx])
+        por_time[t]["p_gamma_rodada"] = (
+            round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+        )
+        idx += 1
+    for t in non_ref:
+        por_time[t]["gamma_rodada2"] = float(coef[idx])
+        por_time[t]["p_gamma_rodada2"] = (
+            round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+        )
+        idx += 1
+
+    b3 = float(coef[idx])
+    p_b3 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+    idx += 1
+    b4 = float(coef[idx])
+    p_b4 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+    idx += 1
+    b5 = float(coef[idx])
+    p_b5 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+
+    return {
+        "times": times,
+        "time_ref": time_ref,
+        "r2": round(r2_fit, 4) if np.isfinite(r2_fit) else None,
+        "n_obs": n,
+        "comum": {
+            "beta_rodada": b1,
+            "beta_rodada2": b2,
+            "beta_forma": b3,
+            "beta_forca": b4,
+            "beta_prop_casa": b5,
+            "p_rodada": p_b1,
+            "p_rodada2": p_b2,
+            "p_forma": p_b3,
+            "p_forca": p_b4,
+            "p_prop_casa": p_b5,
+        },
+        "por_time": por_time,
+    }
+
+
+def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
+    """Converte painel FE em coeficientes por time para projeção."""
+    comum = painel["comum"]
+    out: dict[str, dict] = {}
+    for t, fe in painel["por_time"].items():
+        g1 = float(fe["gamma_rodada"])
+        g2 = float(fe["gamma_rodada2"])
+        b1 = float(comum["beta_rodada"])
+        b2 = float(comum["beta_rodada2"])
+        termos = [
+            {
+                "Variável": "Intercepto",
+                "Beta": round(float(fe["intercept"]), 4),
+                "p-valor": fe.get("p_intercept"),
+            },
+            {
+                "Variável": "Rodada",
+                "Beta": round(b1, 4),
+                "p-valor": comum.get("p_rodada"),
+            },
+            {
+                "Variável": "Rodada²",
+                "Beta": round(b2, 4),
+                "p-valor": comum.get("p_rodada2"),
+            },
+            {
+                "Variável": "Rodada×Time",
+                "Beta": round(g1, 4),
+                "p-valor": fe.get("p_gamma_rodada"),
+            },
+            {
+                "Variável": "Rodada²×Time",
+                "Beta": round(g2, 4),
+                "p-valor": fe.get("p_gamma_rodada2"),
+            },
+            {
+                "Variável": "Forma Recente",
+                "Beta": round(float(comum["beta_forma"]), 4),
+                "p-valor": comum.get("p_forma"),
+            },
+            {
+                "Variável": "Força dos Adversários Passados",
+                "Beta": round(float(comum["beta_forca"]), 4),
+                "p-valor": comum.get("p_forca"),
+            },
+            {
+                "Variável": "Proporção Casa",
+                "Beta": round(float(comum["beta_prop_casa"]), 4),
+                "p-valor": comum.get("p_prop_casa"),
+            },
+        ]
+        out[t] = {
+            "intercept": float(fe["intercept"]),
+            "beta_rodada": b1 + g1,
+            "beta_rodada2": b2 + g2,
+            "beta_forma": float(comum["beta_forma"]),
+            "beta_forca": float(comum["beta_forca"]),
+            "beta_prop_casa": float(comum["beta_prop_casa"]),
+            "gamma_rodada": g1,
+            "gamma_rodada2": g2,
+            "usa_rodada": True,
+            "usa_rodada2": True,
+            "usa_forma": True,
+            "usa_forca": True,
+            "usa_prop_casa": True,
+            "variante_acum": "efeitos_fixos",
+            "termos": termos,
+            "n_obs": painel.get("n_obs", 0),
+            "r2": painel.get("r2"),
+            "time_ref": painel.get("time_ref"),
+        }
+    return out
+
+
 def _prever_acumulado(
     b: dict,
     rodada: int,
@@ -1047,6 +1348,12 @@ def regressao_acumulada_beta(
     forca_map: dict[str, float] | None = None,
 ) -> dict:
     fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
+    if variante == "efeitos_fixos":
+        painel = ajustar_painel_efeitos_fixos(jogos, r_ini, r_fim, fm)
+        por_time = coeficientes_efeitos_fixos_por_time(painel)
+        if time in por_time:
+            return por_time[time]
+        return _coeficientes_vazios_acumulada(variante)
     rodadas, y, props, forcas, formas = _coletar_obs_regressao_acumulada(
         jogos, time, r_ini, r_fim, fm
     )
@@ -1276,10 +1583,14 @@ def aplicar_projecoes_acumulada(
     jogos = [Jogo(**j.__dict__) for j in jogos]
     times = times_do_calendario(jogos)
     forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
-    betas = {
-        t: regressao_acumulada_beta(jogos, t, r_ini, r_fim, variante, forca_map)
-        for t in times
-    }
+    if variante == "efeitos_fixos":
+        painel = ajustar_painel_efeitos_fixos(jogos, r_ini, r_fim, forca_map)
+        betas = coeficientes_efeitos_fixos_por_time(painel)
+    else:
+        betas = {
+            t: regressao_acumulada_beta(jogos, t, r_ini, r_fim, variante, forca_map)
+            for t in times
+        }
     acum_cache: dict[str, dict[int, float]] = {t: {0: 0.0} for t in times}
     for t in times:
         for r in range(1, r_fim + 1):
@@ -1507,6 +1818,21 @@ def tabela_regressao_acumulada_resumo(
     forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
     ordem = _ordem_variaveis_regressao_acumulada(variante)
     rows: list[dict] = []
+    if variante == "efeitos_fixos":
+        painel = ajustar_painel_efeitos_fixos(jogos, r_ini, r_fim, forca_map)
+        por_time = coeficientes_efeitos_fixos_por_time(painel)
+        for t in times_do_calendario(jogos):
+            b = por_time.get(t) or _coeficientes_vazios_acumulada(variante)
+            row: dict = {"Time": t, "R²": b.get("r2")}
+            sig = {
+                termo["Variável"]: pvalor_estrela(termo.get("p-valor"))
+                for termo in b.get("termos", [])
+            }
+            for var in ordem:
+                row[var] = sig.get(var, "-")
+            rows.append(row)
+        return pd.DataFrame(rows, columns=["Time", "R²", *ordem])
+
     for t in times_do_calendario(jogos):
         b = regressao_acumulada_beta(jogos, t, r_ini, r_fim, variante, forca_map)
         row: dict = {"Time": t, "R²": b.get("r2")}

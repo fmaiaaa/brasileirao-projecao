@@ -32,8 +32,9 @@ Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arr
 1. **Regressão de Momento e Aceleração** — PA ~ R + R² + FR
 2. **Regressão de Momento e Histórico** — PA ~ R + PC + FAP
 3. **Regressão Completa** — PA ~ R + R² + FR + FAP + PC
-4. **Média casa x fora × forma recente**
-5. **Repetir 1º turno** — espelha ida/volta já disputada; fallback pela média × forma recente
+4. **Regressão de Efeitos Fixos** — PA ~ αᵢ + R + R² + (R×Time) + (R²×Time) + FR + FAP + PC
+5. **Média casa x fora × forma recente**
+6. **Repetir 1º turno** — espelha ida/volta já disputada; fallback pela média × forma recente
 
 Desempate na classificação: vitórias → saldo de gols → gols marcados → confronto direto entre empatados.
 
