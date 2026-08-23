@@ -27,11 +27,9 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 
 ## Modos de projeção
 
-- **Regressão linear:** `pts ~ rodada + indicador_casa + rodada × indicador_casa` (e variantes abaixo)
+- **Regressão linear:** `pts ~ rodada + indicador_casa + rodada × indicador_casa`
 - **Regressão — pts ~ rodada + indicador_casa** (sem interação)
-- **Regressão — + força adversário** (média pts/jogo do oponente no intervalo)
-- **Regressão — gols ~ rodada + casa + interação** (placar projetado, não só pts)
-- **Regressão — + turno** (indicador 2º turno, rodada ≥ 20)
+- **Regressão — pts ~ rodada + casa + interação + força adversário + turno**
 - **Média simples única:** média de pontos por jogo no intervalo (casa e fora juntos)
 - **Média simples separada:** médias distintas em casa e fora
 - **Repetir 1º turno:** espelha ida/volta já disputada; fallback sempre por regressão linear

@@ -201,6 +201,15 @@ def aplicar_estilo() -> None:
             background-color: #ffffff !important;
             border-radius: 12px;
         }}
+        /* Coluna Time fixa na tabela de estatísticas (fallback CSS) */
+        [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {{
+            overflow: auto !important;
+        }}
+        [data-testid="stDataFrame"] .gdg-sticky-left {{
+            z-index: 2 !important;
+            background: #ffffff !important;
+            box-shadow: 2px 0 6px rgba(15, 23, 42, 0.08);
+        }}
         hr {{ border: none; border-top: 1px solid {COR_BORDA}; margin: 1.25rem 0; }}
         .site-footer {{
             text-align: center;

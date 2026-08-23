@@ -17,7 +17,9 @@ from brasileirao_projecao_core import (
     VarianteRegressao,
     aplicar_projecoes,
     carregar_jogos,
+    colunas_estatisticas_grafico,
     evolucao_pontos_time,
+    fig_estatisticas_times,
     fig_evolucao_times,
     kpis_globais,
     mapa_posicao_pontos,
@@ -95,11 +97,45 @@ if r_fim_stats < r_ini_stats:
     st.warning("Rodada fim (estatísticas) menor que início — usando fim = início.")
     r_fim_stats = r_ini_stats
 
+_df_stats = tabela_estatisticas_times(_jogos_base, int(r_ini_stats), int(r_fim_stats))
+
 st.dataframe(
-    tabela_estatisticas_times(_jogos_base, int(r_ini_stats), int(r_fim_stats)),
+    _df_stats,
     use_container_width=True,
     hide_index=True,
+    column_config={
+        "Time": st.column_config.TextColumn("Time", pinned="left", width="medium"),
+    },
 )
+
+titulo_secao("Gráfico de estatísticas")
+_cols_stats = colunas_estatisticas_grafico(_df_stats)
+_default_times = [t for t in ("Palmeiras", "Flamengo", "Cruzeiro") if t in _times]
+_default_stats = [c for c in ("Total pontos", "Média gols marcados/jogo") if c in _cols_stats]
+
+c_graf1, c_graf2 = st.columns(2)
+with c_graf1:
+    times_stats_graf = st.multiselect(
+        "Times no gráfico",
+        options=_times,
+        default=_default_times,
+        key="stats_graf_times",
+    )
+with c_graf2:
+    metricas_graf = st.multiselect(
+        "Estatísticas no gráfico",
+        options=_cols_stats,
+        default=_default_stats,
+        key="stats_graf_metricas",
+    )
+
+if times_stats_graf and metricas_graf:
+    st.plotly_chart(
+        fig_estatisticas_times(_df_stats, times_stats_graf, metricas_graf),
+        use_container_width=True,
+    )
+else:
+    st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 
 with st.expander("Dados carregados"):
     if _df_fonte is not None:
@@ -138,9 +174,10 @@ _modo_opcoes = [
     "Média simples separada",
     "Repetir 1º turno",
     "Regressão linear — pts ~ rodada + indicador_casa",
-    "Regressão linear — pts ~ rodada + casa + interação + força adversário",
-    "Regressão linear — gols ~ rodada + casa + interação",
-    "Regressão linear — pts ~ rodada + casa + interação + turno",
+    (
+        "Regressão linear — pts ~ rodada + indicador_casa + rodada × indicador_casa "
+        "+ força adversário + turno"
+    ),
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
@@ -161,20 +198,10 @@ elif modo_label == "Regressão linear — pts ~ rodada + indicador_casa":
     modo = "regressao"
     tipo = "mandante_visitante"
     variante = "casa_sem_interacao"
-elif modo_label == (
-    "Regressão linear — pts ~ rodada + casa + interação + força adversário"
-):
+elif "força adversário + turno" in modo_label:
     modo = "regressao"
     tipo = "mandante_visitante"
-    variante = "interacao_adv"
-elif modo_label == "Regressão linear — gols ~ rodada + casa + interação":
-    modo = "regressao"
-    tipo = "mandante_visitante"
-    variante = "interacao_gols"
-elif modo_label == "Regressão linear — pts ~ rodada + casa + interação + turno":
-    modo = "regressao"
-    tipo = "mandante_visitante"
-    variante = "interacao_turno"
+    variante = "interacao_adv_turno"
 else:
     modo = "regressao"
     tipo = "mandante_visitante"

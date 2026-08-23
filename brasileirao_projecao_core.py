@@ -14,9 +14,7 @@ TipoRegressao = Literal["simples", "mandante_visitante"]
 VarianteRegressao = Literal[
     "interacao",
     "casa_sem_interacao",
-    "interacao_adv",
-    "interacao_gols",
-    "interacao_turno",
+    "interacao_adv_turno",
 ]
 
 _DIR_APP = Path(__file__).resolve().parent
@@ -202,8 +200,6 @@ def _coletar_obs_regressao(
     time: str,
     r_ini: int,
     r_fim: int,
-    *,
-    alvo: Literal["pts", "gols"],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
     rodadas: list[float] = []
     casa: list[float] = []
@@ -223,13 +219,13 @@ def _coletar_obs_regressao(
             casa.append(1.0)
             turno.append(1.0 if j.r >= 20 else 0.0)
             adversarios.append(j.vis)
-            y_vals.append(float(gm if alvo == "gols" else pontos_placar(gm, gv)[0]))
+            y_vals.append(float(pontos_placar(gm, gv)[0]))
         elif j.vis == time:
             rodadas.append(float(j.r))
             casa.append(0.0)
             turno.append(1.0 if j.r >= 20 else 0.0)
             adversarios.append(j.mand)
-            y_vals.append(float(gv if alvo == "gols" else pontos_placar(gm, gv)[1]))
+            y_vals.append(float(pontos_placar(gm, gv)[1]))
 
     return (
         np.array(rodadas, dtype=float),
@@ -250,15 +246,13 @@ def _ajustar_regressao(
     variante: VarianteRegressao,
 ) -> dict[str, float]:
     """Ajusta OLS conforme a variante selecionada."""
-    alvo: Literal["pts", "gols"] = "gols" if variante == "interacao_gols" else "pts"
     usa_interacao = variante != "casa_sem_interacao"
-    usa_forca = variante == "interacao_adv"
-    usa_turno = variante == "interacao_turno"
+    usa_forca = variante == "interacao_adv_turno"
+    usa_turno = variante == "interacao_adv_turno"
 
     n = len(y)
-    padrao = 1.0 if alvo == "pts" else 1.2
     if n == 0:
-        return _coeficientes_vazios(variante, alvo, padrao)
+        return _coeficientes_vazios(variante, 1.0)
 
     r = rodadas.astype(float)
     b0_g, b1_g = _ols_pts_rodada(r, y)
@@ -326,7 +320,6 @@ def _ajustar_regressao(
         "beta_forca": b4 if fit_forca else 0.0,
         "beta_turno": b5 if fit_turno else 0.0,
         "variante": variante,
-        "alvo": alvo,
         "usa_casa": fit_casa,
         "usa_interacao": fit_interacao,
         "usa_forca": fit_forca,
@@ -336,7 +329,6 @@ def _ajustar_regressao(
 
 def _coeficientes_vazios(
     variante: VarianteRegressao,
-    alvo: Literal["pts", "gols"],
     padrao: float,
 ) -> dict[str, float]:
     return {
@@ -350,11 +342,10 @@ def _coeficientes_vazios(
         "beta_forca": 0.0,
         "beta_turno": 0.0,
         "variante": variante,
-        "alvo": alvo,
         "usa_casa": variante != "casa_sem_interacao",
-        "usa_interacao": variante not in ("casa_sem_interacao",),
-        "usa_forca": variante == "interacao_adv",
-        "usa_turno": variante == "interacao_turno",
+        "usa_interacao": variante != "casa_sem_interacao",
+        "usa_forca": variante == "interacao_adv_turno",
+        "usa_turno": variante == "interacao_adv_turno",
     }
 
 
@@ -389,9 +380,8 @@ def regressao_beta(
     forca_map: dict[str, float],
 ) -> dict[str, float]:
     """Coeficientes de regressão por jogo conforme variante."""
-    alvo: Literal["pts", "gols"] = "gols" if variante == "interacao_gols" else "pts"
     rodadas, casa, turno, y, adversarios = _coletar_obs_regressao(
-        jogos, time, r_ini, r_fim, alvo=alvo
+        jogos, time, r_ini, r_fim
     )
     return _ajustar_regressao(
         rodadas, casa, turno, y, adversarios, forca_map, variante
@@ -497,32 +487,6 @@ def projetar_jogo_regressao(
     forca_map: dict[str, float] | None = None,
 ) -> tuple[int, int]:
     fm = forca_map or {}
-    b_m = betas.get(jogo.mand, {"geral": 1.0, "alvo": "pts"})
-    b_v = betas.get(jogo.vis, {"geral": 1.0, "alvo": "pts"})
-    alvo = b_m.get("alvo", "pts")
-
-    if alvo == "gols" or variante == "interacao_gols":
-        gm_f = _prever_regressao(
-            b_m,
-            rodada=jogo.r,
-            em_casa=True,
-            adversario=jogo.vis,
-            forca_map=fm,
-        )
-        gv_f = _prever_regressao(
-            b_v,
-            rodada=jogo.r,
-            em_casa=False,
-            adversario=jogo.mand,
-            forca_map=fm,
-        )
-        gm = min(5, max(0, round(gm_f)))
-        gv = min(5, max(0, round(gv_f)))
-        if gm == 0 and gv == 0:
-            gm, gv = 1, 1
-        jogo.proj_gm, jogo.proj_gv = gm, gv
-        return pontos_placar(gm, gv)
-
     em = expected_pts_jogo(
         jogo.mand, jogo.mand, betas, tipo,
         rodada=jogo.r, adversario=jogo.vis, forca_map=fm,
@@ -1318,6 +1282,81 @@ def fig_evolucao_times(
         gridcolor="rgba(15, 23, 42, 0.08)",
         zeroline=False,
     )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
+    )
+    return fig
+
+
+def colunas_estatisticas_grafico(df: pd.DataFrame) -> list[str]:
+    """Colunas numéricas disponíveis para o gráfico comparativo."""
+    return [
+        c
+        for c in df.columns
+        if c != "Time" and pd.api.types.is_numeric_dtype(df[c])
+    ]
+
+
+def fig_estatisticas_times(
+    df: pd.DataFrame,
+    times: list[str],
+    colunas: list[str],
+):
+    """Barras agrupadas: times × estatísticas selecionadas."""
+    import plotly.graph_objects as go
+
+    palette = [
+        "#14532d",
+        "#15803d",
+        "#ca8a04",
+        "#0f766e",
+        "#b45309",
+        "#166534",
+        "#047857",
+        "#854d0e",
+    ]
+    sub = df[df["Time"].isin(times)].copy()
+    if sub.empty or not colunas:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Selecione times e estatísticas",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        return fig
+
+    ordem = [t for t in times if t in sub["Time"].values]
+    sub = sub.set_index("Time").loc[ordem]
+
+    fig = go.Figure()
+    for i, col in enumerate(colunas):
+        fig.add_trace(
+            go.Bar(
+                name=col,
+                x=sub.index.tolist(),
+                y=sub[col].tolist(),
+                marker_color=palette[i % len(palette)],
+                hovertemplate="%{x}<br>" + col + ": %{y}<extra></extra>",
+            )
+        )
+
+    titulo_cols = ", ".join(colunas) if len(colunas) <= 2 else f"{len(colunas)} métricas"
+    fig.update_layout(
+        title=f"Comparativo — {titulo_cols}",
+        xaxis_title="Time",
+        yaxis_title="Valor",
+        barmode="group",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        height=480,
+        margin=dict(t=80),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, sans-serif", color="#0f172a"),
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(
         showgrid=True,
         gridcolor="rgba(15, 23, 42, 0.08)",
