@@ -2165,10 +2165,7 @@ def tabela_comparativa_posicoes(
     df = atual.merge(proj[["Time", "Posição Projetada", "Pts Projetados"]], on="Time")
     df["Delta"] = df["Posição Atual"] - df["Posição Projetada"]
     df = df.sort_values("Posição Projetada")
-    df.insert(0, "Posição", range(1, len(df) + 1))
-    return df[
-        ["Posição", "Time", "Posição Atual", "Posição Projetada", "Delta"]
-    ]
+    return df[["Time", "Posição Atual", "Posição Projetada", "Delta"]]
 
 
 def mapa_posicao_pontos(
