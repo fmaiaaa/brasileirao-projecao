@@ -34,11 +34,15 @@ NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
     "completa": "Regressão Completa",
 }
 
-_MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
+MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
     "regressao_momento_aceleracao": "momento_aceleracao",
     "regressao_momento_historico": "momento_historico",
     "regressao_completa": "completa",
 }
+
+
+def modo_e_regressao_acumulada(modo: ModoProjecao) -> bool:
+    return modo in MODO_PARA_VARIANTE
 
 FORMA_RECENTE_JOGOS = 5
 RODADA_FIM_PRIMEIRO_TURNO = 19
@@ -1380,9 +1384,9 @@ def aplicar_projecoes(
     *,
     variante_reg: VarianteRegressao = "interacao",
 ) -> tuple[list[Jogo], pd.DataFrame]:
-    if modo in _MODO_PARA_VARIANTE:
+    if modo_e_regressao_acumulada(modo):
         return aplicar_projecoes_acumulada(
-            jogos, r_ini, r_fim, _MODO_PARA_VARIANTE[modo]
+            jogos, r_ini, r_fim, MODO_PARA_VARIANTE[modo]
         )
     if modo == "media_simples":
         return aplicar_projecoes_media(jogos, r_ini, r_fim)
