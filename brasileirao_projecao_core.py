@@ -710,7 +710,7 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_prop_casa": False,
             "usa_forca": False,
             "usa_rodada_centrada": False,
-            "limita_delta_rodada": False,
+            "limita_delta_rodada": True,
             "forma_decaindo": False,
         }
     if variante == "momento_historico":
@@ -723,7 +723,7 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_prop_casa": True,
             "usa_forca": True,
             "usa_rodada_centrada": False,
-            "limita_delta_rodada": False,
+            "limita_delta_rodada": True,
             "forma_decaindo": False,
         }
     if variante == "completa_limites":
@@ -748,7 +748,7 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
         "usa_prop_casa": True,
         "usa_forca": True,
         "usa_rodada_centrada": False,
-        "limita_delta_rodada": False,
+        "limita_delta_rodada": True,
         "forma_decaindo": False,
     }
 

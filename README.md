@@ -28,6 +28,7 @@ Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets
 ## Modos de projeção
 
 Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arredondar para 3/1/0.
+Nas regressões, o ganho por rodada é limitado a **no máximo 3 pontos**.
 
 1. **Regressão de Momento e Aceleração (efeitos fixos)** — Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + Interação Rodada × Time + Interação Rodada ao Quadrado × Time + Forma Recente
 2. **Regressão de Momento e Histórico (efeitos fixos)** — Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Interação Rodada × Time + Proporção Casa + Força dos Adversários Passados
@@ -35,7 +36,7 @@ Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arr
 4. **Média casa x fora × forma recente**
 5. **Média casa x fora** — só média pts/jogo em casa ou fora (sem forma recente)
 6. **Repetir 1º turno** — espelha ida/volta já disputada; fallback pela média × forma recente
-7. **Regressão Completa com Limites (efeitos fixos)** — como a Completa, com Rodada Centrada ao Quadrado (Rodada − 19), delta ≤ 3 pts/rodada e forma recente com peso decrescente (80% → 50% em 5 rodadas, piso 25%)
+7. **Regressão Completa com Limites (efeitos fixos)** — como a Completa, com Rodada Centrada ao Quadrado (Rodada − 19) e forma recente com peso decrescente (80% → 50% em 5 rodadas, piso 25%)
 
 Desempate na classificação: vitórias → saldo de gols → gols marcados → confronto direto entre empatados.
 

@@ -274,7 +274,8 @@ with st.expander("Detalhes do modelo"):
                 "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
                 "e, quando aplicável, Interação Rodada ao Quadrado × Time "
                 "(time de referência com interações nulas). "
-                "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal. "
+                "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal "
+                "(máximo 3 pontos por rodada). "
                 "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
             )
         st.dataframe(
