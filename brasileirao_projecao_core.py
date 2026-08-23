@@ -292,20 +292,26 @@ def mapa_forca_adversario(
     }
 
 
-def _historico_pts_time(jogos: list[Jogo], time: str) -> list[tuple[int, str, float]]:
-    """Jogos realizados do time, ordenados por (rodada, hora)."""
+def _historico_pts_time(
+    jogos: list[Jogo], time: str, *, incluir_proj: bool = False
+) -> list[tuple[int, str, float]]:
+    """Jogos do time com pts efetivos, ordenados por (rodada, hora)."""
     hist: list[tuple[int, str, float]] = []
     for j in jogos:
-        if not j.jogado:
+        if time not in (j.mand, j.vis):
             continue
-        pts_pair = j.pts_reais()
-        if pts_pair is None:
+        pts_val: float | None = None
+        if j.jogado:
+            pts_pair = j.pts_reais()
+            if pts_pair is None:
+                continue
+            pm, pv = pts_pair
+            pts_val = float(pm if j.mand == time else pv)
+        elif incluir_proj and j.proj_pm is not None:
+            pts_val = float(j.proj_pm if j.mand == time else j.proj_pv)
+        if pts_val is None:
             continue
-        pm, pv = pts_pair
-        if j.mand == time:
-            hist.append((j.r, j.hora, float(pm)))
-        elif j.vis == time:
-            hist.append((j.r, j.hora, float(pv)))
+        hist.append((j.r, j.hora, pts_val))
     hist.sort(key=lambda x: (x[0], x[1]))
     return hist
 
@@ -318,10 +324,11 @@ def forma_recente_ate(
     *,
     n: int = FORMA_RECENTE_JOGOS,
     padrao: float = 1.0,
+    incluir_proj: bool = False,
 ) -> float:
     """Média de pts nos últimos n jogos antes de (rodada, hora)."""
     anteriores: list[float] = []
-    for r, h, pts in _historico_pts_time(jogos, time):
+    for r, h, pts in _historico_pts_time(jogos, time, incluir_proj=incluir_proj):
         if r < rodada or (r == rodada and h < hora):
             anteriores.append(pts)
     if not anteriores:
@@ -628,6 +635,7 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
             "Rodada²",
             "Proporção casa",
             "Força oponentes passados",
+            "Forma recente",
         ]
     return ["Intercepto", "Rodada", "Indicador casa", "Rodada × casa"]
 
@@ -732,13 +740,14 @@ def _coletar_obs_regressao_acumulada(
     r_fim: int,
     forca_map: dict[str, float],
     variante: VarianteRegressaoAcumulada,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Pts acumulados ao fim de cada rodada disputada no intervalo."""
     rodadas: list[float] = []
     y_vals: list[float] = []
     casas: list[float] = []
     props: list[float] = []
     forcas: list[float] = []
+    formas: list[float] = []
 
     for r in range(r_ini, r_fim + 1):
         jogo_r = jogo_do_time_na_rodada(jogos, time, r)
@@ -752,6 +761,7 @@ def _coletar_obs_regressao_acumulada(
         casas.append(1.0 if em_casa else 0.0)
         props.append(_proporcao_casa(n_casa, n_fora))
         forcas.append(_forca_oponentes_passados(jogos, time, r + 1, forca_map))
+        formas.append(forma_recente_ate(jogos, time, r, jogo_r.hora))
 
     return (
         np.array(rodadas, dtype=float),
@@ -759,6 +769,7 @@ def _coletar_obs_regressao_acumulada(
         np.array(casas, dtype=float),
         np.array(props, dtype=float),
         np.array(forcas, dtype=float),
+        np.array(formas, dtype=float),
     )
 
 
@@ -768,6 +779,7 @@ def _ajustar_regressao_acumulada(
     casa: np.ndarray,
     prop_casa: np.ndarray,
     forca: np.ndarray,
+    forma: np.ndarray,
     variante: VarianteRegressaoAcumulada,
 ) -> dict:
     """Ajusta pts acumulados conforme variante simples ou robusta."""
@@ -806,12 +818,18 @@ def _ajustar_regressao_acumulada(
             "r2": round(r2, 4) if np.isfinite(r2) else None,
         }
 
-    # acum_robusta: rodada + rodada² + proporção casa + força oponentes passados
+    # acum_robusta: rodada + rodada² + proporção casa + força oponentes + forma recente
     prop = prop_casa.astype(float)
     forca_arr = forca.astype(float)
+    forma_arr = forma.astype(float)
     b0_g, b1_g = _ols_pts_rodada(r, y_f)
 
-    def _montar(rodada2_flag: bool, prop_flag: bool, forca_flag: bool):
+    def _montar(
+        rodada2_flag: bool,
+        prop_flag: bool,
+        forca_flag: bool,
+        forma_flag: bool,
+    ):
         cols = [np.ones(n), r]
         if rodada2_flag:
             cols.append(r ** 2)
@@ -819,36 +837,45 @@ def _ajustar_regressao_acumulada(
             cols.append(prop)
         if forca_flag:
             cols.append(forca_arr)
+        if forma_flag:
+            cols.append(forma_arr)
         return cols
 
     def _extrair(
-        coef: np.ndarray, rodada2_flag: bool, prop_flag: bool, forca_flag: bool
+        coef: np.ndarray,
+        rodada2_flag: bool,
+        prop_flag: bool,
+        forca_flag: bool,
+        forma_flag: bool,
     ):
         idx = 0
         b0 = float(coef[idx]); idx += 1
         b1 = float(coef[idx]); idx += 1
-        b_r2 = b_prop = b_forca = 0.0
+        b_r2 = b_prop = b_forca = b_forma = 0.0
         if rodada2_flag:
             b_r2 = float(coef[idx]); idx += 1
         if prop_flag:
             b_prop = float(coef[idx]); idx += 1
         if forca_flag:
-            b_forca = float(coef[idx])
-        return b0, b1, b_r2, b_prop, b_forca
+            b_forca = float(coef[idx]); idx += 1
+        if forma_flag:
+            b_forma = float(coef[idx])
+        return b0, b1, b_r2, b_prop, b_forca, b_forma
 
     tentativas = [
-        (True, True, True),
-        (True, True, False),
-        (True, False, False),
-        (False, False, False),
+        (True, True, True, True),
+        (True, True, True, False),
+        (True, True, False, False),
+        (True, False, False, False),
+        (False, False, False, False),
     ]
-    b0, b1, b_r2, b_prop, b_forca = b0_g, b1_g, 0.0, 0.0, 0.0
-    fit_r2 = fit_prop = fit_forca = True
+    b0, b1, b_r2, b_prop, b_forca, b_forma = b0_g, b1_g, 0.0, 0.0, 0.0, 0.0
+    fit_r2 = fit_prop = fit_forca = fit_forma = True
     termos: list[dict] = []
     r2 = float("nan")
 
-    for rodada2_flag, prop_flag, forca_flag in tentativas:
-        cols = _montar(rodada2_flag, prop_flag, forca_flag)
+    for rodada2_flag, prop_flag, forca_flag, forma_flag in tentativas:
+        cols = _montar(rodada2_flag, prop_flag, forca_flag, forma_flag)
         if n < len(cols):
             continue
         X = np.column_stack(cols)
@@ -861,6 +888,8 @@ def _ajustar_regressao_acumulada(
             nomes.append("Proporção casa")
         if forca_flag:
             nomes.append("Força oponentes passados")
+        if forma_flag:
+            nomes.append("Forma recente")
         termos = [
             {
                 "Variável": nomes[i],
@@ -870,12 +899,13 @@ def _ajustar_regressao_acumulada(
             for i in range(len(nomes))
         ]
         r2 = _ols_r2(X, y_f, coef)
-        b0, b1, b_r2, b_prop, b_forca = _extrair(
-            coef, rodada2_flag, prop_flag, forca_flag
+        b0, b1, b_r2, b_prop, b_forca, b_forma = _extrair(
+            coef, rodada2_flag, prop_flag, forca_flag, forma_flag
         )
         fit_r2 = rodada2_flag
         fit_prop = prop_flag
         fit_forca = forca_flag
+        fit_forma = forma_flag
         break
 
     return {
@@ -884,9 +914,11 @@ def _ajustar_regressao_acumulada(
         "beta_rodada2": b_r2 if fit_r2 else 0.0,
         "beta_prop_casa": b_prop if fit_prop else 0.0,
         "beta_forca": b_forca if fit_forca else 0.0,
+        "beta_forma": b_forma if fit_forma else 0.0,
         "usa_rodada2": fit_r2,
         "usa_prop_casa": fit_prop,
         "usa_forca": fit_forca,
+        "usa_forma": fit_forma,
         "variante_acum": variante,
         "termos": termos,
         "n_obs": n,
@@ -912,9 +944,11 @@ def _coeficientes_vazios_acumulada(variante: VarianteRegressaoAcumulada) -> dict
         "beta_rodada2": 0.0,
         "beta_prop_casa": 0.0,
         "beta_forca": 0.0,
+        "beta_forma": 0.0,
         "usa_rodada2": True,
         "usa_prop_casa": True,
         "usa_forca": True,
+        "usa_forma": True,
         "variante_acum": variante,
         "termos": [],
         "n_obs": 0,
@@ -929,6 +963,7 @@ def _prever_acumulado(
     em_casa: bool = False,
     prop_casa: float = 1.0,
     forca_oponentes: float = 1.0,
+    forma_recente: float = 1.0,
 ) -> float:
     r = float(rodada)
     if b.get("variante_acum") == "acum_simples":
@@ -947,6 +982,8 @@ def _prever_acumulado(
             val += b.get("beta_prop_casa", 0.0) * prop_casa
         if b.get("usa_forca"):
             val += b.get("beta_forca", 0.0) * forca_oponentes
+        if b.get("usa_forma"):
+            val += b.get("beta_forma", 0.0) * forma_recente
     return max(val, 0.0)
 
 
@@ -959,12 +996,15 @@ def regressao_acumulada_beta(
     forca_map: dict[str, float] | None = None,
 ) -> dict:
     fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
-    rodadas, y, casas, props, forcas = _coletar_obs_regressao_acumulada(
+    rodadas, y, casas, props, forcas, formas = _coletar_obs_regressao_acumulada(
         jogos, time, r_ini, r_fim, fm, variante
     )
-    return _ajustar_regressao_acumulada(
-        rodadas, y, casas, props, forcas, variante
+    coefs = _ajustar_regressao_acumulada(
+        rodadas, y, casas, props, forcas, formas, variante
     )
+    if variante == "acum_robusta":
+        coefs["forma_recente"] = forma_recente_atual(jogos, time)
+    return coefs
 
 
 def _discretizar_pts_esperados(em: float, ev: float) -> tuple[int, int]:
@@ -1232,11 +1272,25 @@ def aplicar_projecoes_acumulada(
                 forca_v = _forca_oponentes_passados(
                     jogos, v, r, forca_map, incluir_proj=True
                 )
+                forma_m = forma_recente_ate(
+                    jogos, m, r, j.hora, incluir_proj=True
+                )
+                forma_v = forma_recente_ate(
+                    jogos, v, r, j.hora, incluir_proj=True
+                )
                 target_m = _prever_acumulado(
-                    betas[m], r, prop_casa=prop_m, forca_oponentes=forca_m
+                    betas[m],
+                    r,
+                    prop_casa=prop_m,
+                    forca_oponentes=forca_m,
+                    forma_recente=forma_m,
                 )
                 target_v = _prever_acumulado(
-                    betas[v], r, prop_casa=prop_v, forca_oponentes=forca_v
+                    betas[v],
+                    r,
+                    prop_casa=prop_v,
+                    forca_oponentes=forca_v,
+                    forma_recente=forma_v,
                 )
 
             delta_m = max(0.0, target_m - prev_m)

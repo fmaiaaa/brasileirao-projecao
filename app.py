@@ -197,7 +197,7 @@ _MODO_ACUM_SIMPLES = (
 _MODO_ACUM_ROBUSTA = (
     "Regressão acumulada + robusta: "
     "pts_acumulados ~ rodada + rodada² + proporção_casa "
-    "+ força oponentes passados (atualizada rodada a rodada)"
+    "+ força oponentes passados + forma recente (últimos 5 jogos)"
 )
 _MODO_MEDIA = (
     "Média casa x fora × forma recente "
