@@ -688,6 +688,17 @@ def mapa_posicao_pontos(
     return {row.Time: (int(row.Pos), int(row.Pontos)) for row in df.itertuples()}
 
 
+def mapa_vitorias_saldo_proj(
+    jogos: list[Jogo],
+) -> dict[str, tuple[int, int]]:
+    """Vitórias e saldo de gols totais (realizados + projetados) ao fim do campeonato."""
+    out: dict[str, tuple[int, int]] = {}
+    for time in times_do_calendario(jogos):
+        st = stats_acumuladas_ate(jogos, time, 38, so_realizados=False)
+        out[time] = (st.vit, st.sg)
+    return out
+
+
 @dataclass
 class StatsTime:
     pts: int = 0

@@ -229,6 +229,20 @@ def aplicar_estilo() -> None:
             flex: 1 1 0;
             min-width: 0;
         }}
+        .vel-kpi-row--quad {{
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 10px;
+            margin: 0.35rem 0 0.85rem 0;
+        }}
+        .vel-kpi-row--quad .vel-kpi {{
+            flex: 1 1 0;
+            min-width: 0;
+            padding: 12px 10px;
+        }}
+        .vel-kpi-row--quad .vel-kpi .val {{
+            font-size: 1.1rem;
+        }}
         .vel-time-evolucao-block {{
             margin: 0.5rem 0 1rem 0;
         }}
@@ -306,18 +320,25 @@ def bloco_classificacao_time(
     pts_atual: int,
     pos_final: int,
     pts_final: int,
+    vit_proj: int,
+    saldo_proj: int,
 ) -> None:
-    """Nome do time em uma linha; classificação atual e final lado a lado abaixo."""
+    """Nome do time; abaixo, quatro boxes na mesma linha."""
     import streamlit as st
 
+    saldo_txt = f"+{saldo_proj}" if saldo_proj > 0 else str(saldo_proj)
     st.markdown(
         '<div class="vel-time-evolucao-block">'
         f'<p class="vel-kpi-time-label">{time}</p>'
-        '<div class="vel-kpi-row vel-kpi-row--duo">'
+        '<div class="vel-kpi-row vel-kpi-row--quad">'
         '<div class="vel-kpi"><div class="lbl">Classificação Atual</div>'
         f'<div class="val">{pos_atual}º · {pts_atual} pts</div></div>'
         '<div class="vel-kpi"><div class="lbl">Classificação Final</div>'
         f'<div class="val">{pos_final}º · {pts_final} pts</div></div>'
+        '<div class="vel-kpi"><div class="lbl">Vitórias Projetadas</div>'
+        f'<div class="val">{vit_proj}</div></div>'
+        '<div class="vel-kpi"><div class="lbl">Saldo de Gols Projetado</div>'
+        f'<div class="val">{saldo_txt}</div></div>'
         "</div></div>",
         unsafe_allow_html=True,
     )

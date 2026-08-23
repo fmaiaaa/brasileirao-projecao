@@ -20,6 +20,7 @@ from brasileirao_projecao_core import (
     fig_evolucao_times,
     kpis_globais,
     mapa_posicao_pontos,
+    mapa_vitorias_saldo_proj,
     tabela_comparativa_posicoes,
     tabela_estatisticas_times,
     times_do_calendario,
@@ -178,11 +179,13 @@ times_graf = st.multiselect(
 if times_graf:
     mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
     mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
+    mapa_vit_saldo = mapa_vitorias_saldo_proj(jogos_proj)
 
     for time in times_graf:
         pa, pta = mapa_atual.get(time, (0, 0))
         pf, ptf = mapa_final.get(time, (0, 0))
-        bloco_classificacao_time(time, pa, pta, pf, ptf)
+        vit, saldo = mapa_vit_saldo.get(time, (0, 0))
+        bloco_classificacao_time(time, pa, pta, pf, ptf, vit, saldo)
 
     evolucoes = [
         evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
