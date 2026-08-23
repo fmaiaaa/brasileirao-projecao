@@ -73,36 +73,29 @@ def jogos_from_records(records: list[dict]) -> list[Jogo]:
     return [Jogo(**{k: rec[k] for k in rec}) for rec in records]
 
 
-def carregar_jogos_xlsx(caminho: Path | str | None = None) -> list[Jogo]:
-    """Lê calendário/placares do XLSX em `dados/`."""
-    path = Path(caminho) if caminho else ARQUIVO_CALENDARIO
-    if not path.is_file():
-        raise FileNotFoundError(f"Planilha não encontrada: {path}")
-
-    df = pd.read_excel(path, sheet_name=0)
-    col_map = {
-        "rodada": "Rodada",
-        "data": "Data",
-        "hora": "Hora",
-        "mandante": "Mandante",
-        "placar": "Placar",
-        "visitante": "Visitante",
-        "estadio": "Estadio",
-        "estádio": "Estadio",
-    }
+def _dataframe_para_jogos(df: pd.DataFrame) -> list[Jogo]:
     norm = {str(c).strip().lower(): c for c in df.columns}
     records: list[dict] = []
     for _, row in df.iterrows():
         rodada_raw = row[norm.get("rodada", "Rodada")]
-        r = int(re.search(r"(\d+)", str(rodada_raw)).group(1))  # type: ignore[union-attr]
+        m = re.search(r"(\d+)", str(rodada_raw))
+        if not m:
+            continue
+        r = int(m.group(1))
         data = str(row[norm.get("data", "Data")])[:10]
         hora_val = row.get(norm.get("hora", "Hora"), "")
         hora = str(hora_val)[:8] if pd.notna(hora_val) else ""
         mand = str(row[norm.get("mandante", "Mandante")]).strip()
         vis = str(row[norm.get("visitante", "Visitante")]).strip()
+        if not mand or not vis or mand.lower() == "nan":
+            continue
         placar = str(row[norm.get("placar", "Placar")]).strip()
         est_col = norm.get("estadio") or norm.get("estádio") or "Estadio"
-        est = str(row[est_col]).strip() if est_col in df.columns and pd.notna(row[est_col]) else ""
+        est = (
+            str(row[est_col]).strip()
+            if est_col in df.columns and pd.notna(row[est_col])
+            else ""
+        )
         records.append(
             {
                 "r": r,
@@ -115,6 +108,53 @@ def carregar_jogos_xlsx(caminho: Path | str | None = None) -> list[Jogo]:
             }
         )
     return jogos_from_records(records)
+
+
+def carregar_jogos_xlsx(caminho: Path | str | None = None) -> list[Jogo]:
+    """Lê calendário/placares do XLSX local (fallback)."""
+    path = Path(caminho) if caminho else ARQUIVO_CALENDARIO
+    if not path.is_file():
+        raise FileNotFoundError(f"Planilha não encontrada: {path}")
+    df = pd.read_excel(path, sheet_name=0)
+    return _dataframe_para_jogos(df)
+
+
+def carregar_jogos_gsheets() -> tuple[list[Jogo], pd.DataFrame, str]:
+    """Lê calendário da planilha Google (secrets [connections.gsheets])."""
+    from brasileirao_gsheets import (
+        _secrets_connections_gsheets,
+        montar_service_account_info,
+        ler_planilha_gsheets,
+        spreadsheet_id_brasileirao,
+    )
+
+    raw = _secrets_connections_gsheets()
+    info = montar_service_account_info(raw)
+    if not info:
+        raise ValueError(
+            "Credenciais [connections.gsheets] ausentes ou incompletas. "
+            "Use as mesmas secrets do velocímetro (private_key + client_email)."
+        )
+    sid = spreadsheet_id_brasileirao()
+    df = ler_planilha_gsheets(info, sid)
+    if df.empty:
+        raise ValueError(f"Planilha {sid} retornou vazia.")
+    return _dataframe_para_jogos(df), df, sid
+
+
+def carregar_jogos(
+    *, preferir_gsheets: bool = True
+) -> tuple[list[Jogo], str, pd.DataFrame | None]:
+    """Google Sheets (padrão) ou XLSX local."""
+    if preferir_gsheets:
+        try:
+            jogos, df, sid = carregar_jogos_gsheets()
+            return jogos, f"Google Sheets ({sid})", df
+        except Exception:
+            pass
+    jogos = carregar_jogos_xlsx()
+    df = pd.read_excel(ARQUIVO_CALENDARIO)
+    return jogos, f"Arquivo local ({ARQUIVO_CALENDARIO.name})", df
 
 
 def times_do_calendario(jogos: list[Jogo]) -> list[str]:

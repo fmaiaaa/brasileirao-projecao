@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import streamlit as st
+import pandas as pd
 
 from brasileirao_estilo import aplicar_estilo, cabecalho_pagina, kpi_row
+from brasileirao_gsheets import URL_PLANILHA, credenciais_disponiveis
 from brasileirao_projecao_core import (
-    ARQUIVO_CALENDARIO,
     ModoProjecao,
     TipoRegressao,
     aplicar_projecoes,
-    carregar_jogos_xlsx,
+    carregar_jogos,
     classificacao,
     evolucao_pontos_time,
     fig_evolucao_times,
@@ -18,7 +19,13 @@ from brasileirao_projecao_core import (
     tabela_betas,
     times_do_calendario,
 )
-import pandas as pd
+
+
+@st.cache_data(ttl=120, show_spinner="Carregando planilha…")
+def _carregar_dados_cached(recarregar: int) -> tuple[list, str, pd.DataFrame | None]:
+    del recarregar  # bust cache ao incrementar
+    return carregar_jogos(preferir_gsheets=True)
+
 
 st.set_page_config(
     page_title="Projeção Brasileirão 2026",
@@ -31,11 +38,36 @@ cabecalho_pagina(
     "Classificação projetada · betas por rodada · evolução por time",
 )
 
+if "reload_token" not in st.session_state:
+    st.session_state.reload_token = 0
+
+with st.expander("Fonte de dados (Google Sheets)", expanded=False):
+    st.markdown(
+        f"Planilha editável: [{URL_PLANILHA}]({URL_PLANILHA})  \n"
+        "Use **`-`** na coluna **Placar** para jogos pendentes. "
+        "As credenciais vêm de **`[connections.gsheets]`** (mesmas do velocímetro)."
+    )
+    if credenciais_disponiveis():
+        st.success("Secrets `[connections.gsheets]` detectadas.")
+    else:
+        st.warning(
+            "Secrets não encontradas — usando arquivo local `dados/` como fallback."
+        )
+    if st.button("Recarregar planilha"):
+        st.session_state.reload_token += 1
+        st.cache_data.clear()
+        st.rerun()
+
 try:
-    _jogos_base = carregar_jogos_xlsx()
+    _jogos_base, _fonte, _df_fonte = _carregar_dados_cached(st.session_state.reload_token)
 except FileNotFoundError as e:
     st.error(str(e))
     st.stop()
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
+
+st.caption(f"Fonte atual: **{_fonte}**")
 
 _times = times_do_calendario(_jogos_base)
 _jogados = sum(1 for j in _jogos_base if j.jogado)
@@ -84,10 +116,7 @@ with st.expander("Configuração da projeção", expanded=True):
     if modo == "repetir_turno":
         fb_label = st.radio(
             "Fallback quando não há jogo espelhado",
-            options=[
-                "Regressão linear",
-                "Média simples",
-            ],
+            options=["Regressão linear", "Média simples"],
             index=0,
             horizontal=True,
         )
@@ -100,11 +129,7 @@ with st.expander("Configuração da projeção", expanded=True):
     c3, c4 = st.columns(2)
     with c3:
         r_ini = st.number_input(
-            "Rodada início (janela)",
-            min_value=1,
-            max_value=38,
-            value=1,
-            step=1,
+            "Rodada início (janela)", min_value=1, max_value=38, value=1, step=1
         )
     with c4:
         r_fim = st.number_input(
@@ -118,28 +143,22 @@ with st.expander("Configuração da projeção", expanded=True):
         st.warning("Rodada fim menor que início — usando fim = início.")
         r_fim = r_ini
 
-modo_metrica_ui: ModoProjecao = (
-    modo if modo != "repetir_turno" else modo_fallback
-)
+modo_metrica_ui: ModoProjecao = modo if modo != "repetir_turno" else modo_fallback
 jogos_proj, df_log = aplicar_projecoes(
     _jogos_base, modo, int(r_ini), int(r_fim), tipo, modo_fallback=modo_fallback
 )
 
-with st.expander(
-    "Betas / médias por time (intervalo selecionado)"
-):
+with st.expander("Betas / médias por time (intervalo selecionado)"):
     df_betas = tabela_betas(
         _jogos_base, int(r_ini), int(r_fim), tipo, modo=modo_metrica_ui
     )
     st.dataframe(df_betas, use_container_width=True, hide_index=True)
 
-with st.expander("Planilha de dados (fonte dos resultados)"):
-    st.caption(
-        f"Edite o arquivo **`{ARQUIVO_CALENDARIO.name}`** na pasta `dados/` e recarregue o app. "
-        "Use `-` em **Placar** para jogos ainda não realizados."
-    )
-    df_fonte = pd.read_excel(ARQUIVO_CALENDARIO)
-    st.dataframe(df_fonte, use_container_width=True, hide_index=True)
+with st.expander("Dados carregados (visualização)"):
+    if _df_fonte is not None:
+        st.dataframe(_df_fonte, use_container_width=True, hide_index=True)
+    else:
+        st.info("Sem preview tabular.")
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Classificação")
@@ -219,27 +238,17 @@ if times_graf:
                         "Tracejado?": tracej,
                     }
                 )
-        st.dataframe(
-            pd.DataFrame(linhas),
-            use_container_width=True,
-            hide_index=True,
-        )
+        st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
 else:
     st.info("Selecione ao menos um time no expander acima.")
 
 with st.expander("Metodologia"):
     st.markdown(
         """
-**Regressão:** reta `pts_acumulados ~ rodada` no intervalo; inclinação = **beta** (pts/rodada).
+**Dados:** planilha Google Sheets (editável online); cache de 2 min — use *Recarregar planilha*.
 
-**Média simples:** média de pontos por jogo no intervalo (≈ pts/rodada); opção casa/fora separada.
-
-**Repetir 1º turno:** espelha ida/volta já disputada; sem espelho, usa regressão ou média (fallback).
-
-**Gráfico:** trechos tracejados = incerteza que pode alterar classificação (pontos, vitórias, saldo, gols).
+**Regressão / Média / Espelho 1º turno** — ver README no GitHub.
 
 Jogos já realizados **nunca** são alterados.
-
-**Dados:** edite `dados/calendario_brasileirao_2026.xlsx` (coluna **Placar**: `-` = pendente).
         """
     )

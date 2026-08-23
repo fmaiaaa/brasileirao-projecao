@@ -11,20 +11,19 @@ streamlit run app.py
 
 ## Atualizar resultados
 
-Edite a planilha:
+**Recomendado:** edite a planilha Google Sheets (link no app):
 
-`dados/calendario_brasileirao_2026.xlsx`
+https://docs.google.com/spreadsheets/d/1QkOIvRa9YinnOveOK4BkX4h_ZtGYRg1ZLzIfokbQh5I/edit
 
 | Coluna     | Descrição                                      |
 |------------|------------------------------------------------|
 | Rodada     | 1ª, 2ª, … 38ª                                  |
-| Data/Hora  | Data e horário do jogo                         |
-| Mandante   | Time da casa                                   |
-| Placar     | Ex.: `2 x 1` ou `-` se ainda não jogou         |
-| Visitante  | Time visitante                                 |
-| Estadio    | Opcional                                       |
+| Placar     | Ex.: `2 x 1` ou **`-`** se pendente           |
+| Mandante / Visitante | Times                          |
 
-Salve o arquivo e recarregue o app.
+Compartilhe a planilha com o `client_email` das secrets. Use as **mesmas secrets** do velocímetro (`[connections.gsheets]`). No app, clique em **Recarregar planilha** após editar.
+
+**Fallback local:** `dados/calendario_brasileirao_2026.xlsx` (se secrets ausentes).
 
 ## Modos de projeção
 
@@ -36,13 +35,15 @@ Salve o arquivo e recarregue o app.
 
 - Main file: `app.py`
 - Python 3.10+
+- Secrets: copie `[connections.gsheets]` do velocímetro (ver `.streamlit/secrets.toml.example`)
 
 ## Estrutura
 
 ```
 app.py
 brasileirao_projecao_core.py   # lógica
+brasileirao_gsheets.py         # Google Sheets (secrets velocímetro)
 brasileirao_estilo.py          # visual
-dados/calendario_brasileirao_2026.xlsx
+dados/calendario_brasileirao_2026.xlsx  # fallback local
 requirements.txt
 ```
