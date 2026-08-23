@@ -207,8 +207,16 @@ if r_fim_proj < r_ini_proj:
     st.warning("Rodada fim (projeção) menor que início — usando fim = início.")
     r_fim_proj = r_ini_proj
 
-_MODO_SIMPLES = "Regressão linear + simples"
-_MODO_ROBUSTA = "Regressão linear + robusta"
+_MODO_SIMPLES = (
+    "Regressão linear + simples: "
+    "pts ~ rodada + indicador_casa + rodada × indicador_casa"
+)
+_MODO_ROBUSTA = (
+    "Regressão linear + robusta: "
+    "pts ~ rodada + indicador_casa + rodada × indicador_casa "
+    "+ força adversário (média pts/jogo do oponente no intervalo) + turno "
+    "+ forma recente (últimos 5 jogos)"
+)
 _MODO_MEDIA = "Média simples casa x fora"
 _MODO_TURNO = "Repetir 1 turno"
 
@@ -219,7 +227,7 @@ modo: ModoProjecao
 tipo: TipoRegressao
 variante: VarianteRegressao = "interacao"
 
-if modo_label == _MODO_ROBUSTA:
+if modo_label.startswith("Regressão linear + robusta"):
     modo = "regressao"
     tipo = "mandante_visitante"
     variante = "interacao_adv_turno"
@@ -233,12 +241,6 @@ else:
     modo = "regressao"
     tipo = "mandante_visitante"
     variante = "interacao"
-
-if modo_label == _MODO_ROBUSTA:
-    st.caption(
-        "Inclui força adversário (média pts/jogo do oponente no intervalo), "
-        "turno e forma recente (últimos 5 jogos)."
-    )
 
 jogos_proj, df_log = aplicar_projecoes(
     _jogos_base, modo, int(r_ini_proj), int(r_fim_proj), tipo, variante_reg=variante
