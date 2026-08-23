@@ -46,12 +46,55 @@ def aplicar_estilo() -> None:
             100% {{ background-position: 200% 50%; }}
         }}
         html, body, :root, [data-testid="stApp"] {{
-            color-scheme: light !important;
+            color-scheme: only light !important;
+        }}
+        /* Força tema claro mesmo com SO/navegador em dark mode */
+        @media (prefers-color-scheme: dark) {{
+            html, body, :root, [data-testid="stApp"], .stApp {{
+                color-scheme: only light !important;
+            }}
+        }}
+        html[data-theme="dark"],
+        body[data-theme="dark"],
+        .stApp[data-theme="dark"],
+        [data-testid="stApp"][data-theme="dark"] {{
+            color-scheme: only light !important;
+        }}
+        :root {{
+            --background-color: #ffffff !important;
+            --secondary-background-color: #f0fdf4 !important;
+            --text-color: {COR_TEXTO} !important;
+            --primary-color: {COR_VERDE} !important;
         }}
         html, body {{
             font-family: 'Inter', sans-serif;
-            color: {COR_TEXTO};
+            color: {COR_TEXTO} !important;
             background: transparent !important;
+        }}
+        /* Widgets / tabelas sempre claros */
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stWidgetLabel"],
+        [data-testid="stRadio"] label,
+        [data-testid="stMultiSelect"] label,
+        .stSelectbox label {{
+            color: {COR_TEXTO_MUTED} !important;
+        }}
+        [data-testid="stDataFrame"] *,
+        [data-testid="stTable"] * {{
+            color-scheme: only light !important;
+        }}
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] > div,
+        div[data-baseweb="base-input"],
+        [data-baseweb="popover"] ul,
+        [data-baseweb="menu"] {{
+            background-color: {COR_INPUT_BG} !important;
+            color: {COR_TEXTO} !important;
+        }}
+        [data-testid="stExpander"] details,
+        [data-testid="stExpander"] summary {{
+            background-color: rgba(255, 255, 255, 0.85) !important;
+            color: {COR_TEXTO} !important;
         }}
         .stApp, [data-testid="stApp"] {{
             background:

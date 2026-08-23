@@ -2176,22 +2176,40 @@ def mapa_posicao_pontos(
 
 
 def _probs_vitoria_empate_derrota(em: float, ev: float) -> tuple[float, float, float]:
-    """Converte pts esperados mand/vis em P(vitória mandante, empate, vitória visitante)."""
-    xh = max(float(em), 0.05)
-    xv = max(float(ev), 0.05)
-    wh, wd, wa = xh * xh, xh * xv, xv * xv
-    z = wh + wd + wa
-    return wh / z, wd / z, wa / z
+    """
+    Converte pts esperados mand/vis em P(vitória mandante, empate, vitória visitante)
+    de modo que E[pts] ≈ (em, ev) após eventual reescala para soma ≤ 3.
+    """
+    em = max(0.0, float(em))
+    ev = max(0.0, float(ev))
+    s = em + ev
+    if s <= 1e-9:
+        return (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
+    if s > 3.0:
+        em, ev = 3.0 * em / s, 3.0 * ev / s
+        s = 3.0
+    pd = max(0.0, 3.0 - s)
+    ph = max(0.0, (em - pd) / 3.0)
+    pa = max(0.0, (ev - pd) / 3.0)
+    z = ph + pd + pa
+    if z <= 1e-12:
+        return (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
+    return ph / z, pd / z, pa / z
 
 
 def probabilidades_cenarios_finais(
     jogos: list[Jogo],
     *,
-    n_sims: int = 2500,
+    n_sims: int = 4000,
     seed: int = 42,
 ) -> dict[str, dict[str, float]]:
     """
-    Monte Carlo a partir dos pts esperados dos jogos pendentes.
+    Monte Carlo centrado na projeção decimal do modelo.
+
+    Cada time parte dos pontos já conquistados; o restante esperado é o da
+    classificação projetada. Ruído ~ N(0, σ√n_jogos) em torno desse restante,
+    para E[pontos finais] = pontos projetados (coerente com a tabela do modo).
+
     Retorna, por time: campeao, g4, g6, z4 (frações 0–1).
     G4 = 1º–4º | G6 = 1º–6º | Z4 = 17º–20º.
     """
@@ -2204,36 +2222,38 @@ def probabilidades_cenarios_finais(
         return vazio
 
     idx = {t: i for i, t in enumerate(times)}
-    base = [
-        stats_acumuladas_ate(jogos, t, 38, so_realizados=True) for t in times
-    ]
-    pts0 = np.array([s.pts for s in base], dtype=float)
-    vit0 = np.array([s.vit for s in base], dtype=float)
-    sg0 = np.array([s.sg for s in base], dtype=float)
-    gf0 = np.array([s.gf for s in base], dtype=float)
+    mapa_atual = mapa_posicao_pontos(jogos, incluir_proj=False)
+    mapa_proj = mapa_posicao_pontos(jogos, incluir_proj=True)
 
-    pendentes: list[tuple[int, int, float, float, float]] = []
+    pts_atual = np.array(
+        [float(mapa_atual.get(t, (0, 0.0))[1]) for t in times], dtype=float
+    )
+    pts_proj = np.array(
+        [float(mapa_proj.get(t, (0, 0.0))[1]) for t in times], dtype=float
+    )
+    restante = pts_proj - pts_atual
+
+    n_rest = np.zeros(n_times, dtype=float)
     for j in jogos:
-        if j.jogado or j.proj_pm is None or j.proj_pv is None:
+        if j.jogado or j.proj_pm is None:
             continue
-        pendentes.append(
-            (
-                idx[j.mand],
-                idx[j.vis],
-                *_probs_vitoria_empate_derrota(float(j.proj_pm), float(j.proj_pv)),
-            )
-        )
+        if j.mand in idx:
+            n_rest[idx[j.mand]] += 1.0
+        if j.vis in idx:
+            n_rest[idx[j.vis]] += 1.0
+
+    # Desvio por jogo restante (pts 0/1/3 ≈ σ ~ 1); escala com √n.
+    sigma_jogo = 0.70
+    sigma = sigma_jogo * np.sqrt(np.maximum(n_rest, 1.0))
 
     camp = np.zeros(n_times, dtype=float)
     g4 = np.zeros(n_times, dtype=float)
     g6 = np.zeros(n_times, dtype=float)
     z4 = np.zeros(n_times, dtype=float)
 
-    if not pendentes:
-        df = classificacao(jogos, incluir_proj=True)
-        for row in df.itertuples():
-            i = idx[row.Time]
-            pos = int(row.Pos)
+    if float(n_rest.sum()) <= 0:
+        for t, (pos, _) in mapa_proj.items():
+            i = idx[t]
             if pos == 1:
                 camp[i] = 1.0
             if pos <= 4:
@@ -2252,45 +2272,22 @@ def probabilidades_cenarios_finais(
             for t, i in idx.items()
         }
 
-    n_g = len(pendentes)
-    p_mat = np.array([[ph, pd, pa] for _, _, ph, pd, pa in pendentes], dtype=float)
-    im = np.array([p[0] for p in pendentes], dtype=int)
-    iv = np.array([p[1] for p in pendentes], dtype=int)
+    # Critérios auxiliares fixos da projeção (desempate estável entre sims)
+    base_proj = [
+        stats_acumuladas_ate(jogos, t, 38, so_realizados=False) for t in times
+    ]
+    vit_tb = np.array([float(s.vit) for s in base_proj], dtype=float)
+    sg_tb = np.array([float(s.sg) for s in base_proj], dtype=float)
+    gf_tb = np.array([float(s.gf) for s in base_proj], dtype=float)
 
     rng = np.random.default_rng(seed)
-    u = rng.random((n_sims, n_g))
-    cdf = np.cumsum(p_mat, axis=1)
-    # 0 = vit mandante, 1 = empate, 2 = vit visitante
-    outcomes = (u[..., None] > cdf[None, :, :]).sum(axis=2).astype(np.int8)
+    ruido = rng.normal(0.0, 1.0, size=(n_sims, n_times)) * sigma[None, :]
 
     for s in range(n_sims):
-        pts = pts0.copy()
-        vit = vit0.copy()
-        sg = sg0.copy()
-        gf = gf0.copy()
-        o = outcomes[s]
-        for g in range(n_g):
-            a, b = im[g], iv[g]
-            if o[g] == 0:
-                pts[a] += 3.0
-                vit[a] += 1.0
-                sg[a] += 1.0
-                gf[a] += 1.0
-                sg[b] -= 1.0
-            elif o[g] == 1:
-                pts[a] += 1.0
-                pts[b] += 1.0
-                gf[a] += 1.0
-                gf[b] += 1.0
-            else:
-                pts[b] += 3.0
-                vit[b] += 1.0
-                sg[b] += 1.0
-                gf[b] += 1.0
-                sg[a] -= 1.0
-
-        # ranking: pts → vitórias → saldo → gols
-        ordem = np.lexsort((-gf, -sg, -vit, -pts))
+        # E[pts] = pts_proj (ruído de média zero)
+        pts = pts_proj + ruido[s]
+        pts = np.maximum(pts, 0.0)
+        ordem = np.lexsort((-gf_tb, -sg_tb, -vit_tb, -pts))
         pos = np.empty(n_times, dtype=int)
         pos[ordem] = np.arange(1, n_times + 1)
         camp[pos == 1] += 1.0
