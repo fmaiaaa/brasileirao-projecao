@@ -3558,18 +3558,28 @@ def fig_estatisticas_por_rodada(
         r_atual = int(reais.max()) if not reais.empty else int(r_eixo)
 
     ordem_times = [t for t in times if t in sub["Time"].unique()]
+    um_time = len(ordem_times) == 1
+    uma_serie = len(colunas) == 1
     fig = go.Figure()
     k = 0
     for time in ordem_times:
         s = sub[sub["Time"] == time].sort_values("Rodada")
         for col in colunas:
-            nome = f"{time} — {col}"
+            if um_time and not uma_serie:
+                nome = col
+            elif uma_serie and not um_time:
+                nome = time
+            elif um_time and uma_serie:
+                nome = col
+            else:
+                nome = f"{time} — {col}"
             cor = _PALETA_SERIES[k % len(_PALETA_SERIES)]
             s_real = s[~s["Projetado"]]
             s_proj = s[s["Projetado"]]
 
             xs_real = s_real["Rodada"].tolist()
             ys_real = s_real[col].tolist()
+            hover_nome = f"{time} — {col}"
             if xs_real:
                 fig.add_trace(
                     go.Scatter(
@@ -3584,10 +3594,10 @@ def fig_estatisticas_por_rodada(
                         ),
                         textposition="top center",
                         textfont=dict(size=9, color=cor),
-                        legendgroup=nome,
+                        legendgroup=f"{time}||{col}",
                         showlegend=True,
                         hovertemplate=(
-                            f"{nome}<br>Rodada %{{x}}<br>{col}: %{{y}}"
+                            f"{hover_nome}<br>Rodada %{{x}}<br>{col}: %{{y}}"
                             "<extra></extra>"
                         ),
                     )
@@ -3611,10 +3621,10 @@ def fig_estatisticas_por_rodada(
                         text=_rotulos_em_ticks(xs_p, ys_p, col),
                         textposition="top center",
                         textfont=dict(size=9, color=cor),
-                        legendgroup=nome,
+                        legendgroup=f"{time}||{col}",
                         showlegend=False,
                         hovertemplate=(
-                            f"{nome} (proj.)<br>Rodada %{{x}}<br>{col}: %{{y}}"
+                            f"{hover_nome} (proj.)<br>Rodada %{{x}}<br>{col}: %{{y}}"
                             "<extra></extra>"
                         ),
                     )
