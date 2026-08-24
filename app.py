@@ -48,6 +48,9 @@ _PLOTLY_CONFIG = {
     "displaylogo": False,
 }
 
+_DEFAULT_TIMES_GRAF = ("Palmeiras", "Flamengo", "Athletico-PR", "Cruzeiro")
+_DEFAULT_METRICA_GRAF = "Média gols marcados/Média gols sofridos"
+
 
 def _html_legenda_mobile(itens: list[dict[str, str]]) -> str:
     linhas = []
@@ -154,8 +157,8 @@ st.dataframe(
 
 titulo_secao("Gráfico de estatísticas")
 _cols_stats = colunas_estatisticas_grafico(_df_stats)
-_default_times = [t for t in ("Palmeiras", "Flamengo", "Cruzeiro") if t in _times]
-_default_stats = [c for c in ("Total pontos", "Média gols marcados") if c in _cols_stats]
+_default_times = [t for t in _DEFAULT_TIMES_GRAF if t in _times]
+_default_stats = [c for c in (_DEFAULT_METRICA_GRAF,) if c in _cols_stats]
 
 c_graf1, c_graf2 = st.columns(2)
 with c_graf1:
@@ -186,7 +189,7 @@ _df_stats_rodada = estatisticas_por_rodada(
 titulo_secao("Gráfico de estatísticas por rodada")
 _cols_stats_rodada = colunas_estatisticas_rodada_grafico(_df_stats_rodada)
 _default_stats_rodada = [
-    c for c in ("Total pontos", "Média gols marcados") if c in _cols_stats_rodada
+    c for c in (_DEFAULT_METRICA_GRAF,) if c in _cols_stats_rodada
 ]
 
 c_graf_r1, c_graf_r2 = st.columns(2)
@@ -205,17 +208,26 @@ with c_graf_r2:
         key="stats_rodada_metricas",
     )
 
+incluir_projecao_rodada = st.toggle(
+    "Incluir projeções no gráfico (preenche rodadas até a 38)",
+    value=True,
+    key="stats_rodada_projecao",
+)
+
 if times_rodada_graf and metricas_rodada_graf:
-    _df_rodada_proj = projetar_estatisticas_por_rodada(
-        _jogos_base,
-        _df_stats_rodada,
-        int(r_ini_stats),
-        _r_fim_rodada,
-        metricas_rodada_graf,
-    )
+    if incluir_projecao_rodada:
+        _df_graf_rodada = projetar_estatisticas_por_rodada(
+            _jogos_base,
+            _df_stats_rodada,
+            int(r_ini_stats),
+            _r_fim_rodada,
+            metricas_rodada_graf,
+        )
+    else:
+        _df_graf_rodada = _df_stats_rodada
     _grafico(
         fig_estatisticas_por_rodada(
-            _df_rodada_proj,
+            _df_graf_rodada,
             times_rodada_graf,
             metricas_rodada_graf,
             r_atual=_r_fim_rodada,

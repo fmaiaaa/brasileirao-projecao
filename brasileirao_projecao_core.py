@@ -3646,7 +3646,10 @@ def fig_estatisticas_por_rodada(
         font=dict(family="Inter, sans-serif", color="#0f172a"),
         **_layout_grafico(titulo),
     )
-    _config_eixo_x_rodada(fig, max(r_eixo, 38.0))
+    _config_eixo_x_rodada(
+        fig,
+        max(r_eixo, 38.0) if sub["Projetado"].any() else r_eixo,
+    )
     if len(colunas) == 1:
         _config_eixo_y_posicao(fig, colunas[0])
     else:
