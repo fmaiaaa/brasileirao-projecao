@@ -1079,8 +1079,10 @@ def _coletar_painel_efeitos_fixos(
     r_ini: int,
     r_fim: int,
     forca_map: dict[str, float],
+    *,
+    metrica: str | None = None,
 ) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Painel time×rodada: Y=PA, R, PC, FAP, FR."""
+    """Painel time×rodada: Y=PA (ou metrica) + R, PC, FAP, FR."""
     times_obs: list[str] = []
     rodadas: list[float] = []
     y_vals: list[float] = []
@@ -1093,11 +1095,23 @@ def _coletar_painel_efeitos_fixos(
             jogo_r = jogo_do_time_na_rodada(jogos, time, r)
             if jogo_r is None or not jogo_r.jogado:
                 continue
-            acum = stats_acumuladas_ate(jogos, time, r, so_realizados=True)
+            if metrica is None:
+                y_val = float(
+                    stats_acumuladas_ate(jogos, time, r, so_realizados=True).pts
+                )
+            else:
+                agg = _agregar_stats_time(jogos, time, r_ini, r)
+                raw = _metricas_estatisticas_de_agregado(agg).get(metrica, 0.0)
+                try:
+                    y_val = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(y_val):
+                    continue
             n_casa, n_fora = _contagem_casa_fora_ate(jogos, time, r)
             times_obs.append(time)
             rodadas.append(float(r))
-            y_vals.append(float(acum.pts))
+            y_vals.append(y_val)
             props.append(_proporcao_casa(n_casa, n_fora))
             forcas.append(_forca_oponentes_passados(jogos, time, r + 1, forca_map))
             formas.append(forma_recente_ate(jogos, time, r, jogo_r.hora))
@@ -1118,10 +1132,12 @@ def ajustar_painel_efeitos_fixos(
     r_fim: int,
     variante: VarianteRegressaoAcumulada,
     forca_map: dict[str, float] | None = None,
+    *,
+    metrica: str | None = None,
 ) -> dict:
     """
     Painel FE por variante:
-    Pontos Acumulados = Efeito Fixo do Time + controles
+    Y (pontos acumulados ou métrica) = Efeito Fixo do Time + controles
     + Interação Rodada × Time (+ Interação Rodada ao Quadrado × Time, se aplicável).
 
     Controles comuns seguem a variante.
@@ -1131,7 +1147,7 @@ def ajustar_painel_efeitos_fixos(
     fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
     times = times_do_calendario(jogos)
     times_obs, r, y, prop, forca, forma = _coletar_painel_efeitos_fixos(
-        jogos, r_ini, r_fim, fm
+        jogos, r_ini, r_fim, fm, metrica=metrica
     )
     n = len(y)
     vazio = {
@@ -3224,10 +3240,125 @@ def estatisticas_por_rodada(
     for time in times:
         for r in range(r_ini, r_fim + 1):
             agg = _agregar_stats_time(jogos, time, r_ini, r)
-            row = {"Time": time, "Rodada": r}
+            row = {"Time": time, "Rodada": r, "Projetado": False}
             row.update(_metricas_estatisticas_de_agregado(agg))
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _eh_metrica_total(metrica: str) -> bool:
+    return metrica.startswith("Total ")
+
+
+def projetar_estatisticas_por_rodada(
+    jogos: list[Jogo],
+    df_real: pd.DataFrame,
+    r_ini: int,
+    r_fim_obs: int,
+    colunas: list[str],
+    *,
+    variante: VarianteRegressaoAcumulada = "completa",
+    r_proj_fim: int = 38,
+) -> pd.DataFrame:
+    """
+    Estende o DF real até r_proj_fim com o mesmo painel FE da pontuação,
+    trocando apenas a variável explicada (Y = métrica).
+    """
+    if df_real.empty:
+        return df_real.copy()
+
+    out = df_real.copy()
+    if "Projetado" not in out.columns:
+        out["Projetado"] = False
+    if r_fim_obs >= r_proj_fim:
+        return out
+
+    colunas = [c for c in colunas if c in COLUNAS_ESTATISTICAS_GRAFICO]
+    if not colunas:
+        return out
+
+    times = times_do_calendario(jogos)
+    forca_map = mapa_forca_adversario(jogos, r_ini, r_fim_obs)
+    casa_fora: dict[str, tuple[int, int]] = {
+        t: _contagem_casa_fora_ate(jogos, t, r_fim_obs) for t in times
+    }
+    forma_base: dict[str, float] = {}
+    forma_geral: dict[str, float] = {}
+    for t in times:
+        jr = jogo_do_time_na_rodada(jogos, t, r_fim_obs)
+        if jr is not None and jr.jogado:
+            forma_base[t] = float(forma_recente_ate(jogos, t, r_fim_obs, jr.hora))
+        else:
+            forma_base[t] = 1.0
+        fg = media_pts_jogo(jogos, t, r_ini, r_fim_obs, "simples").get("geral", 1.0)
+        forma_geral[t] = float(fg) if fg else 1.0
+
+    prev: dict[tuple[str, str], float] = {}
+    for t in times:
+        row = out[(out["Time"] == t) & (out["Rodada"] == r_fim_obs)]
+        for col in colunas:
+            if not row.empty and col in row.columns:
+                try:
+                    prev[(t, col)] = float(row.iloc[0][col])
+                except (TypeError, ValueError):
+                    prev[(t, col)] = 0.0
+            else:
+                prev[(t, col)] = 0.0
+
+    betas_por_col: dict[str, dict[str, dict]] = {}
+    for col in colunas:
+        painel = ajustar_painel_efeitos_fixos(
+            jogos, r_ini, r_fim_obs, variante, forca_map, metrica=col
+        )
+        betas_por_col[col] = coeficientes_efeitos_fixos_por_time(painel)
+
+    proj_rows: list[dict] = []
+    n_casa_prog = {t: casa_fora[t][0] for t in times}
+    n_fora_prog = {t: casa_fora[t][1] for t in times}
+
+    for r in range(r_fim_obs + 1, r_proj_fim + 1):
+        horizonte = max(1, r - r_fim_obs)
+        w = peso_forma_recente_horizonte(horizonte)
+        for t in times:
+            jogo_r = jogo_do_time_na_rodada(jogos, t, r)
+            if jogo_r is not None:
+                if jogo_r.mand == t:
+                    n_casa_prog[t] += 1
+                else:
+                    n_fora_prog[t] += 1
+            prop = _proporcao_casa(n_casa_prog[t], n_fora_prog[t])
+            forca = _forca_oponentes_passados(
+                jogos, t, r_fim_obs + 1, forca_map, incluir_proj=False
+            )
+            forma = w * forma_base[t] + (1.0 - w) * forma_geral[t]
+            row: dict = {"Time": t, "Rodada": r, "Projetado": True}
+            for col in colunas:
+                b = betas_por_col[col].get(t)
+                if not b:
+                    row[col] = prev[(t, col)]
+                    continue
+                target = _prever_acumulado(
+                    b,
+                    r,
+                    prop_casa=prop,
+                    forca_oponentes=forca,
+                    forma_recente=forma,
+                )
+                ant = prev[(t, col)]
+                if _eh_metrica_total(col):
+                    delta = max(0.0, target - ant)
+                    if col == "Total pontos" and b.get("limita_delta_rodada"):
+                        delta = min(DELTA_PTS_MAX_POR_RODADA, delta)
+                    val = ant + delta
+                else:
+                    val = float(target)
+                prev[(t, col)] = val
+                row[col] = round(val, 3) if isinstance(val, float) else val
+            proj_rows.append(row)
+
+    if not proj_rows:
+        return out
+    return pd.concat([out, pd.DataFrame(proj_rows)], ignore_index=True)
 
 
 def colunas_estatisticas_rodada_grafico(df: pd.DataFrame) -> list[str]:
@@ -3291,14 +3422,12 @@ def _rotulos_em_ticks(
     *,
     r_recente: float | None = None,
 ) -> list[str]:
-    """Rótulos em 1, 9.5, 28.5, 38 e na rodada mais recente (no lugar de 19)."""
+    """Rótulos na rodada 19, na rodada atual e na 38."""
     if not xs:
         return []
-    if r_recente is None:
-        r_recente = max(float(x) for x in xs)
-    ticks_label = [t for t in TICKS_RODADA if abs(float(t) - 19.0) > 1e-9]
-    alvos = {float(t) for t in ticks_label}
-    alvos.add(float(r_recente))
+    alvos = {19.0, 38.0}
+    if r_recente is not None:
+        alvos.add(float(r_recente))
     return [
         _fmt_rotulo(y, col)
         if any(abs(float(x) - a) < 1e-9 for a in alvos)
@@ -3389,8 +3518,10 @@ def fig_estatisticas_por_rodada(
     df: pd.DataFrame,
     times: list[str],
     colunas: list[str],
+    *,
+    r_atual: int | None = None,
 ):
-    """Linhas por rodada no mesmo gráfico; cor por Time — Série."""
+    """Linhas por rodada; sólido = real, tracejado = projetado até 38."""
     import plotly.graph_objects as go
 
     sub = df[df["Time"].isin(times)].copy()
@@ -3416,7 +3547,15 @@ def fig_estatisticas_por_rodada(
         )
         return fig
 
+    if "Projetado" not in sub.columns:
+        sub["Projetado"] = False
+    else:
+        sub["Projetado"] = sub["Projetado"].fillna(False).astype(bool)
+
     r_eixo = float(sub["Rodada"].max())
+    if r_atual is None:
+        reais = sub.loc[~sub["Projetado"], "Rodada"]
+        r_atual = int(reais.max()) if not reais.empty else int(r_eixo)
 
     ordem_times = [t for t in times if t in sub["Time"].unique()]
     fig = go.Figure()
@@ -3425,25 +3564,61 @@ def fig_estatisticas_por_rodada(
         s = sub[sub["Time"] == time].sort_values("Rodada")
         for col in colunas:
             nome = f"{time} — {col}"
-            xs = s["Rodada"].tolist()
-            ys = s[col].tolist()
             cor = _PALETA_SERIES[k % len(_PALETA_SERIES)]
-            fig.add_trace(
-                go.Scatter(
-                    x=xs,
-                    y=ys,
-                    mode="lines+markers+text",
-                    name=nome,
-                    line=dict(color=cor, width=2.5),
-                    marker=dict(size=5),
-                    text=_rotulos_em_ticks(xs, ys, col, r_recente=r_eixo),
-                    textposition="top center",
-                    textfont=dict(size=9, color=cor),
-                    hovertemplate=(
-                        f"{nome}<br>Rodada %{{x}}<br>{col}: %{{y}}<extra></extra>"
-                    ),
+            s_real = s[~s["Projetado"]]
+            s_proj = s[s["Projetado"]]
+
+            xs_real = s_real["Rodada"].tolist()
+            ys_real = s_real[col].tolist()
+            if xs_real:
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs_real,
+                        y=ys_real,
+                        mode="lines+markers+text",
+                        name=nome,
+                        line=dict(color=cor, width=2.5, dash="solid"),
+                        marker=dict(size=5),
+                        text=_rotulos_em_ticks(
+                            xs_real, ys_real, col, r_recente=float(r_atual)
+                        ),
+                        textposition="top center",
+                        textfont=dict(size=9, color=cor),
+                        legendgroup=nome,
+                        showlegend=True,
+                        hovertemplate=(
+                            f"{nome}<br>Rodada %{{x}}<br>{col}: %{{y}}"
+                            "<extra></extra>"
+                        ),
+                    )
                 )
-            )
+
+            if not s_proj.empty:
+                # Conecta último ponto real ao início da projeção
+                xs_p = s_proj["Rodada"].tolist()
+                ys_p = s_proj[col].tolist()
+                if xs_real:
+                    xs_p = [xs_real[-1]] + xs_p
+                    ys_p = [ys_real[-1]] + ys_p
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs_p,
+                        y=ys_p,
+                        mode="lines+markers+text",
+                        name=nome,
+                        line=dict(color=cor, width=2.5, dash="dash"),
+                        marker=dict(size=5),
+                        text=_rotulos_em_ticks(xs_p, ys_p, col),
+                        textposition="top center",
+                        textfont=dict(size=9, color=cor),
+                        legendgroup=nome,
+                        showlegend=False,
+                        hovertemplate=(
+                            f"{nome} (proj.)<br>Rodada %{{x}}<br>{col}: %{{y}}"
+                            "<extra></extra>"
+                        ),
+                    )
+                )
             k += 1
 
     titulo = (
@@ -3461,7 +3636,7 @@ def fig_estatisticas_por_rodada(
         font=dict(family="Inter, sans-serif", color="#0f172a"),
         **_layout_grafico(titulo),
     )
-    _config_eixo_x_rodada(fig, r_eixo)
+    _config_eixo_x_rodada(fig, max(r_eixo, 38.0))
     if len(colunas) == 1:
         _config_eixo_y_posicao(fig, colunas[0])
     else:

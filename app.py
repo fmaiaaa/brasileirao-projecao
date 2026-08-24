@@ -23,6 +23,7 @@ from brasileirao_projecao_core import (
     carregar_jogos,
     colunas_estatisticas_grafico,
     estatisticas_por_rodada,
+    projetar_estatisticas_por_rodada,
     colunas_estatisticas_rodada_grafico,
     evolucao_pontos_time,
     evolucao_posicao_time,
@@ -205,11 +206,19 @@ with c_graf_r2:
     )
 
 if times_rodada_graf and metricas_rodada_graf:
+    _df_rodada_proj = projetar_estatisticas_por_rodada(
+        _jogos_base,
+        _df_stats_rodada,
+        int(r_ini_stats),
+        _r_fim_rodada,
+        metricas_rodada_graf,
+    )
     _grafico(
         fig_estatisticas_por_rodada(
-            _df_stats_rodada,
+            _df_rodada_proj,
             times_rodada_graf,
             metricas_rodada_graf,
+            r_atual=_r_fim_rodada,
         )
     )
 else:
