@@ -69,7 +69,6 @@ def _grafico(fig) -> None:
     itens = extrair_itens_legenda(fig)
     if not itens:
         return
-    st.markdown('<span class="grafico-legenda-anchor"></span>', unsafe_allow_html=True)
     with st.expander("Legendas", expanded=False):
         st.markdown(_html_legenda_mobile(itens), unsafe_allow_html=True)
 

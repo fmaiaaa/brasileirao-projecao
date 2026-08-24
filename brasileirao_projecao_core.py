@@ -3145,7 +3145,7 @@ def fig_estatisticas_times(
     if sub.empty or not colunas:
         fig = go.Figure()
         fig.update_layout(
-            title=None,
+            title=dict(text=""),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
@@ -3222,9 +3222,15 @@ _TICKS_EIXO_POSICAO = [1, 5, 10, 15, 20]
 
 
 def _layout_legenda_desktop() -> dict:
-    """Legenda horizontal acima do gráfico (layout original no PC)."""
+    """Legenda horizontal centralizada acima do gráfico (PC)."""
     return {
-        "legend": dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        "legend": dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            x=0.5,
+            xanchor="center",
+        ),
         "margin": dict(t=60),
     }
 
@@ -3232,7 +3238,8 @@ def _layout_legenda_desktop() -> dict:
 def _layout_grafico(titulo: str) -> dict:
     """Layout padrão: sem título no Plotly (título fica fora, estilo seção)."""
     layout = _layout_legenda_desktop()
-    layout["title"] = None
+    # text="" evita o "undefined" que o Plotly/JS mostra com title=None
+    layout["title"] = dict(text="")
     layout["meta"] = {"titulo": titulo}
     return layout
 
@@ -3362,7 +3369,7 @@ def fig_estatisticas_por_rodada(
     if sub.empty or not colunas:
         fig = go.Figure()
         fig.update_layout(
-            title=None,
+            title=dict(text=""),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
@@ -3374,7 +3381,7 @@ def fig_estatisticas_por_rodada(
     if sub.empty:
         fig = go.Figure()
         fig.update_layout(
-            title=None,
+            title=dict(text=""),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )

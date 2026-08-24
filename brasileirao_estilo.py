@@ -350,12 +350,21 @@ def aplicar_estilo() -> None:
             flex-shrink: 0;
             border: 1px solid rgba(15, 23, 42, 0.12);
         }}
+        /* Expanders de legenda: só no celular (PC usa legenda do Plotly) */
         @media (min-width: 769px) {{
-            span.grafico-legenda-anchor ~ div[data-testid="stExpander"] {{
+            [data-testid="stExpander"]:has(.grafico-legenda-list) {{
                 display: none !important;
+                height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: hidden !important;
             }}
         }}
         @media (max-width: 768px) {{
+            [data-testid="stExpander"]:has(.grafico-legenda-list) {{
+                display: block !important;
+                margin-top: 0.65rem !important;
+            }}
             [data-testid="stPlotlyChart"] .bartext,
             [data-testid="stPlotlyChart"] .textpoint,
             [data-testid="stPlotlyChart"] g.textpoint {{
@@ -426,10 +435,6 @@ def aplicar_estilo() -> None:
             [data-testid="stPlotlyChart"] .inlegend {{
                 display: none !important;
                 visibility: hidden !important;
-            }}
-            span.grafico-legenda-anchor ~ div[data-testid="stExpander"] {{
-                display: block !important;
-                margin-top: 0.65rem !important;
             }}
             [data-testid="stPlotlyChart"] > div,
             [data-testid="stPlotlyChart"] .js-plotly-plot,
