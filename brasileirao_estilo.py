@@ -387,6 +387,23 @@ def aplicar_estilo() -> None:
                 width: 100% !important;
                 max-width: 100% !important;
             }}
+            /* Sem zoom nos gráficos: só deslizar a página */
+            [data-testid="stPlotlyChart"],
+            [data-testid="stPlotlyChart"] .js-plotly-plot,
+            [data-testid="stPlotlyChart"] .plot-container,
+            [data-testid="stPlotlyChart"] .svg-container {{
+                touch-action: pan-x pan-y !important;
+            }}
+            .js-plotly-plot .nsewdrag,
+            .js-plotly-plot .nsdrag,
+            .js-plotly-plot .ewdrag,
+            .js-plotly-plot .draglayer,
+            .js-plotly-plot .zoomlayer {{
+                pointer-events: none !important;
+            }}
+            .js-plotly-plot .modebar {{
+                display: none !important;
+            }}
             [data-testid="stRadio"] > div {{
                 flex-direction: column !important;
                 gap: 0.35rem !important;

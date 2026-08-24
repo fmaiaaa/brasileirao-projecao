@@ -55,6 +55,7 @@ PESO_FORMA_RECENTE_H1 = 0.80  # próxima rodada
 PESO_FORMA_RECENTE_H5 = 0.50  # daqui a 5 rodadas
 PESO_FORMA_RECENTE_PISO = 0.20
 ALTURA_GRAFICO = 520
+TICKS_RODADA = [1, 9.5, 19, 28.5, 38]
 
 _DIR_APP = Path(__file__).resolve().parent
 ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
@@ -3026,13 +3027,7 @@ def fig_evolucao_times(
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
-    fig.update_xaxes(
-        dtick=1,
-        range=[0.5, 38.5],
-        showgrid=True,
-        gridcolor="rgba(15, 23, 42, 0.08)",
-        zeroline=False,
-    )
+    _config_eixo_x_rodada(fig)
     fig.update_yaxes(
         showgrid=True,
         gridcolor="rgba(15, 23, 42, 0.08)",
@@ -3101,13 +3096,7 @@ def fig_evolucao_posicao_times(
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
-    fig.update_xaxes(
-        dtick=1,
-        range=[0.5, 38.5],
-        showgrid=True,
-        gridcolor="rgba(15, 23, 42, 0.08)",
-        zeroline=False,
-    )
+    _config_eixo_x_rodada(fig)
     _config_eixo_y_posicao(fig, "Posição")
     return fig
 
@@ -3186,7 +3175,7 @@ def fig_estatisticas_times(
         yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
         barmode="group",
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title_text="Série"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         height=ALTURA_GRAFICO,
         margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
@@ -3224,6 +3213,21 @@ def colunas_estatisticas_rodada_grafico(df: pd.DataFrame) -> list[str]:
 
 
 _TICKS_EIXO_POSICAO = [0, 5, 10, 15, 20]
+
+
+def _config_eixo_x_rodada(fig, r_max: float = 38) -> None:
+    """Eixo X de rodada: somente 1, 9.5, 19, 28.5 e 38 (até r_max)."""
+    r_max = max(1.0, float(r_max))
+    ticks = [t for t in TICKS_RODADA if t <= r_max + 1e-9]
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=ticks,
+        ticktext=[str(int(t)) if float(t).is_integer() else str(t) for t in ticks],
+        range=[0.5, min(38.0, r_max) + 0.5],
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
+    )
 
 
 def _kwargs_eixo_y(col: str) -> dict:
@@ -3265,6 +3269,8 @@ def fig_estatisticas_por_rodada(
     df: pd.DataFrame,
     times: list[str],
     colunas: list[str],
+    *,
+    r_max: int | None = None,
 ):
     """Linhas por rodada no mesmo gráfico; cor por Time — Série."""
     import plotly.graph_objects as go
@@ -3279,6 +3285,12 @@ def fig_estatisticas_por_rodada(
             plot_bgcolor="rgba(0,0,0,0)",
         )
         return fig
+
+    if r_max is not None:
+        sub = sub[sub["Rodada"] <= r_max]
+    r_eixo = float(r_max) if r_max is not None else 38.0
+    if "Rodada" in sub.columns and not sub.empty:
+        r_eixo = min(r_eixo, float(sub["Rodada"].max()))
 
     ordem_times = [t for t in times if t in sub["Time"].unique()]
     fig = go.Figure()
@@ -3314,20 +3326,14 @@ def fig_estatisticas_por_rodada(
         xaxis_title="Rodada",
         yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title_text="Time — Série"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         height=ALTURA_GRAFICO,
         margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
-    fig.update_xaxes(
-        dtick=1,
-        range=[0.5, 38.5],
-        showgrid=True,
-        gridcolor="rgba(15, 23, 42, 0.08)",
-        zeroline=False,
-    )
+    _config_eixo_x_rodada(fig, r_eixo)
     if len(colunas) == 1:
         _config_eixo_y_posicao(fig, colunas[0])
     else:

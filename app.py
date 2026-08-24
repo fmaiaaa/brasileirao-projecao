@@ -38,6 +38,14 @@ from brasileirao_projecao_core import (
     times_do_calendario,
 )
 
+_PLOTLY_CONFIG = {
+    "displaylogo": False,
+}
+
+
+def _grafico(fig) -> None:
+    st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CONFIG)
+
 
 @st.cache_data(ttl=120, show_spinner="Carregando planilha…")
 def _carregar_dados_cached() -> tuple[list, object | None]:
@@ -139,15 +147,13 @@ with c_graf2:
     )
 
 if times_stats_graf and metricas_graf:
-    st.plotly_chart(
-        fig_estatisticas_times(_df_stats, times_stats_graf, metricas_graf),
-        use_container_width=True,
-    )
+    _grafico(fig_estatisticas_times(_df_stats, times_stats_graf, metricas_graf))
 else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 
+_r_fim_rodada = int(min(r_fim_stats, _ult_r))
 _df_stats_rodada = estatisticas_por_rodada(
-    _jogos_base, int(r_ini_stats), int(r_fim_stats)
+    _jogos_base, int(r_ini_stats), _r_fim_rodada
 )
 
 titulo_secao("Gráfico de estatísticas por rodada")
@@ -173,11 +179,13 @@ with c_graf_r2:
     )
 
 if times_rodada_graf and metricas_rodada_graf:
-    st.plotly_chart(
+    _grafico(
         fig_estatisticas_por_rodada(
-            _df_stats_rodada, times_rodada_graf, metricas_rodada_graf
-        ),
-        use_container_width=True,
+            _df_stats_rodada,
+            times_rodada_graf,
+            metricas_rodada_graf,
+            r_max=_r_fim_rodada,
+        )
     )
 else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
@@ -323,12 +331,12 @@ if times_graf:
     evolucoes = [
         evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
     ]
-    st.plotly_chart(fig_evolucao_times(evolucoes), use_container_width=True)
+    _grafico(fig_evolucao_times(evolucoes))
 
     evolucoes_pos = [
         evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
     ]
-    st.plotly_chart(fig_evolucao_posicao_times(evolucoes_pos), use_container_width=True)
+    _grafico(fig_evolucao_posicao_times(evolucoes_pos))
 else:
     st.info("Selecione ao menos um time para exibir o gráfico.")
 
