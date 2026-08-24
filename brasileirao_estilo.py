@@ -324,6 +324,86 @@ def aplicar_estilo() -> None:
             margin: 0.75rem 0 0.25rem 0;
             font-size: 0.95rem;
         }}
+
+        /* --- Mobile: responsivo sem alterar desktop --- */
+        @media (max-width: 768px) {{
+            [data-testid="stMain"] {{
+                padding: 10px 8px !important;
+            }}
+            .block-container {{
+                max-width: 100% !important;
+                padding: 1rem 0.85rem 1.15rem 0.85rem !important;
+                border-radius: 16px !important;
+            }}
+            div[data-testid="stHorizontalBlock"] {{
+                flex-direction: column !important;
+                flex-wrap: wrap !important;
+                gap: 0.35rem !important;
+            }}
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
+                width: 100% !important;
+                flex: 1 1 100% !important;
+                min-width: 100% !important;
+            }}
+            .vel-kpi-row {{
+                gap: 8px;
+            }}
+            .vel-kpi {{
+                flex: 1 1 calc(50% - 4px) !important;
+                min-width: calc(50% - 4px) !important;
+                padding: 12px 10px;
+            }}
+            .vel-kpi-row--duo,
+            .vel-kpi-row--quad {{
+                flex-wrap: wrap !important;
+            }}
+            .vel-kpi-row--duo .vel-kpi,
+            .vel-kpi-row--quad .vel-kpi {{
+                flex: 1 1 calc(50% - 5px) !important;
+                min-width: calc(50% - 5px) !important;
+            }}
+            .vel-kpi-row--quad .vel-kpi .lbl {{
+                min-height: auto;
+            }}
+            .ficha-hero-logo-wrap {{
+                max-width: 180px;
+            }}
+            .secao-titulo {{
+                font-size: 1.05rem;
+                margin: 1rem 0 0.65rem 0;
+            }}
+            [data-testid="stDataFrame"],
+            [data-testid="stTable"] {{
+                overflow-x: auto !important;
+                -webkit-overflow-scrolling: touch;
+            }}
+            [data-testid="stPlotlyChart"] {{
+                width: 100% !important;
+                overflow-x: hidden !important;
+            }}
+            [data-testid="stPlotlyChart"] > div,
+            [data-testid="stPlotlyChart"] .js-plotly-plot,
+            [data-testid="stPlotlyChart"] .plot-container {{
+                width: 100% !important;
+                max-width: 100% !important;
+            }}
+            [data-testid="stRadio"] > div {{
+                flex-direction: column !important;
+                gap: 0.35rem !important;
+            }}
+            [data-testid="stRadio"] label {{
+                width: 100% !important;
+            }}
+        }}
+
+        @media (max-width: 420px) {{
+            .vel-kpi,
+            .vel-kpi-row--duo .vel-kpi,
+            .vel-kpi-row--quad .vel-kpi {{
+                flex: 1 1 100% !important;
+                min-width: 100% !important;
+            }}
+        }}
         </style>
         """,
         unsafe_allow_html=True,

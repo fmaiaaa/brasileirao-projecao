@@ -139,10 +139,11 @@ with c_graf2:
     )
 
 if times_stats_graf and metricas_graf:
-    st.plotly_chart(
-        fig_estatisticas_times(_df_stats, times_stats_graf, metricas_graf),
-        use_container_width=True,
-    )
+    for metrica in metricas_graf:
+        st.plotly_chart(
+            fig_estatisticas_times(_df_stats, times_stats_graf, metrica),
+            use_container_width=True,
+        )
 else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 
@@ -173,12 +174,13 @@ with c_graf_r2:
     )
 
 if times_rodada_graf and metricas_rodada_graf:
-    st.plotly_chart(
-        fig_estatisticas_por_rodada(
-            _df_stats_rodada, times_rodada_graf, metricas_rodada_graf
-        ),
-        use_container_width=True,
-    )
+    for metrica in metricas_rodada_graf:
+        st.plotly_chart(
+            fig_estatisticas_por_rodada(
+                _df_stats_rodada, times_rodada_graf, metrica
+            ),
+            use_container_width=True,
+        )
 else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 

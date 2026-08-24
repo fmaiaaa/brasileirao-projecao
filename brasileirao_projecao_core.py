@@ -54,6 +54,7 @@ DELTA_PTS_MAX_POR_RODADA = 3.0
 PESO_FORMA_RECENTE_H1 = 0.80  # próxima rodada
 PESO_FORMA_RECENTE_H5 = 0.50  # daqui a 5 rodadas
 PESO_FORMA_RECENTE_PISO = 0.20
+ALTURA_GRAFICO = 520
 
 _DIR_APP = Path(__file__).resolve().parent
 ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
@@ -3019,7 +3020,7 @@ def fig_evolucao_times(
         yaxis_title="Pontos acumulados",
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        height=520,
+        height=ALTURA_GRAFICO,
         margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -3094,7 +3095,7 @@ def fig_evolucao_posicao_times(
         yaxis_title="Posição",
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        height=520,
+        height=ALTURA_GRAFICO,
         margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -3119,9 +3120,9 @@ def colunas_estatisticas_grafico(df: pd.DataFrame) -> list[str]:
 def fig_estatisticas_times(
     df: pd.DataFrame,
     times: list[str],
-    colunas: list[str],
+    coluna: str,
 ):
-    """Barras agrupadas: times × estatísticas selecionadas."""
+    """Barras por time para uma estatística."""
     import plotly.graph_objects as go
 
     palette = [
@@ -3135,7 +3136,7 @@ def fig_estatisticas_times(
         "#854d0e",
     ]
     sub = df[df["Time"].isin(times)].copy()
-    if sub.empty or not colunas:
+    if sub.empty or coluna not in sub.columns:
         fig = go.Figure()
         fig.update_layout(
             title="Selecione times e estatísticas",
@@ -3148,26 +3149,23 @@ def fig_estatisticas_times(
     sub = sub.set_index("Time").loc[ordem]
 
     fig = go.Figure()
-    for i, col in enumerate(colunas):
-        fig.add_trace(
-            go.Bar(
-                name=col,
-                x=sub.index.tolist(),
-                y=sub[col].tolist(),
-                marker_color=palette[i % len(palette)],
-                hovertemplate="%{x}<br>" + col + ": %{y}<extra></extra>",
-            )
+    fig.add_trace(
+        go.Bar(
+            name=coluna,
+            x=sub.index.tolist(),
+            y=sub[coluna].tolist(),
+            marker_color=palette[0],
+            hovertemplate="%{x}<br>" + coluna + ": %{y}<extra></extra>",
         )
+    )
 
-    titulo_cols = ", ".join(colunas) if len(colunas) <= 2 else f"{len(colunas)} métricas"
     fig.update_layout(
-        title=f"Comparativo — {titulo_cols}",
+        title=f"Comparativo — {coluna}",
         xaxis_title="Time",
-        yaxis_title="Valor",
-        barmode="group",
+        yaxis_title=coluna,
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        height=480,
+        showlegend=False,
+        height=ALTURA_GRAFICO,
         margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -3244,11 +3242,10 @@ def _config_eixo_y_posicao(
 def fig_estatisticas_por_rodada(
     df: pd.DataFrame,
     times: list[str],
-    colunas: list[str],
+    coluna: str,
 ):
-    """Linhas por rodada: um painel por estatística, uma linha por time."""
+    """Linhas por rodada para uma estatística (uma linha por time)."""
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     palette = [
         "#14532d",
@@ -3261,7 +3258,7 @@ def fig_estatisticas_por_rodada(
         "#854d0e",
     ]
     sub = df[df["Time"].isin(times)].copy()
-    if sub.empty or not colunas:
+    if sub.empty or coluna not in sub.columns:
         fig = go.Figure()
         fig.update_layout(
             title="Selecione times e estatísticas",
@@ -3271,84 +3268,41 @@ def fig_estatisticas_por_rodada(
         return fig
 
     ordem_times = [t for t in times if t in sub["Time"].unique()]
-    n_met = len(colunas)
-
-    if n_met == 1:
-        fig = go.Figure()
-        col = colunas[0]
-        for ti, time in enumerate(ordem_times):
-            s = sub[sub["Time"] == time].sort_values("Rodada")
-            fig.add_trace(
-                go.Scatter(
-                    x=s["Rodada"],
-                    y=s[col],
-                    mode="lines+markers",
-                    name=time,
-                    line=dict(color=palette[ti % len(palette)], width=2.5),
-                    marker=dict(size=5),
-                    hovertemplate=(
-                        f"{time}<br>Rodada %{{x}}<br>{col}: %{{y}}<extra></extra>"
-                    ),
-                )
-            )
-        fig.update_layout(
-            title=f"Evolução rodada a rodada — {col}",
-            xaxis_title="Rodada",
-            yaxis_title=col,
-            hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-            height=480,
-            margin=dict(t=80),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(family="Inter, sans-serif", color="#0f172a"),
-        )
-        fig.update_xaxes(dtick=1, showgrid=True, gridcolor="rgba(15, 23, 42, 0.08)")
-        _config_eixo_y_posicao(fig, col)
-        return fig
-
-    fig = make_subplots(
-        rows=n_met,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.05,
-        subplot_titles=colunas,
-    )
-    for mi, col in enumerate(colunas):
-        for ti, time in enumerate(ordem_times):
-            s = sub[sub["Time"] == time].sort_values("Rodada")
-            fig.add_trace(
-                go.Scatter(
-                    x=s["Rodada"],
-                    y=s[col],
-                    mode="lines+markers",
-                    name=time,
-                    line=dict(color=palette[ti % len(palette)], width=2),
-                    marker=dict(size=4),
-                    legendgroup=time,
-                    showlegend=(mi == 0),
-                    hovertemplate=(
-                        f"{time}<br>Rodada %{{x}}<br>{col}: %{{y}}<extra></extra>"
-                    ),
+    fig = go.Figure()
+    for ti, time in enumerate(ordem_times):
+        s = sub[sub["Time"] == time].sort_values("Rodada")
+        fig.add_trace(
+            go.Scatter(
+                x=s["Rodada"],
+                y=s[coluna],
+                mode="lines+markers",
+                name=time,
+                line=dict(color=palette[ti % len(palette)], width=2.5),
+                marker=dict(size=5),
+                hovertemplate=(
+                    f"{time}<br>Rodada %{{x}}<br>{coluna}: %{{y}}<extra></extra>"
                 ),
-                row=mi + 1,
-                col=1,
             )
-        _config_eixo_y_posicao(fig, col, row=mi + 1, title_text=col)
-
-    altura = max(480, 180 * n_met + 120)
+        )
     fig.update_layout(
-        title="Evolução rodada a rodada",
+        title=f"Evolução rodada a rodada — {coluna}",
+        xaxis_title="Rodada",
+        yaxis_title=coluna,
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        height=altura,
-        margin=dict(t=90),
+        height=ALTURA_GRAFICO,
+        margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
     fig.update_xaxes(
-        dtick=1, showgrid=True, gridcolor="rgba(15, 23, 42, 0.08)", row=n_met, col=1
+        dtick=1,
+        range=[0.5, 38.5],
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
     )
+    _config_eixo_y_posicao(fig, coluna)
     return fig
 
