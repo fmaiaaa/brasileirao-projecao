@@ -193,24 +193,14 @@ titulo_secao("Configuração da projeção")
 r_ini_proj = 1
 r_fim_proj = int(min(_ult_r, 38))
 
-_MODO_MOMENTO_ACELERACAO = (
-    "Regressão de Momento e Aceleração (efeitos fixos) — "
-    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + "
-    "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + Forma Recente"
-)
-_MODO_MOMENTO_HISTORICO = (
-    "Regressão de Momento e Histórico (efeitos fixos) — "
-    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Interação Rodada × Time + "
-    "Proporção Casa + Força dos Adversários Passados"
-)
 _MODO_COMPLETA = (
-    "Regressão Completa (efeitos fixos) — "
+    "Regressão Completa (normal) — "
     "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + "
     "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + "
     "Forma Recente + Força dos Adversários Passados + Proporção Casa"
 )
-_MODO_COMPLETA_LIMITES = (
-    "Regressão Completa com Limites (efeitos fixos) — "
+_MODO_COMPLETA_CENTRADA = (
+    "Regressão Completa (centrada) — "
     "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + "
     "Rodada Centrada ao Quadrado + Interação Rodada × Time + "
     "Interação Rodada Centrada ao Quadrado × Time + Forma Recente + "
@@ -218,31 +208,21 @@ _MODO_COMPLETA_LIMITES = (
     "(Rodada Centrada = Rodada − 19)"
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
-_MODO_MEDIA_CASA_FORA = "Média casa x fora"
 _MODO_TURNO = "Repetir 1º turno"
 
 _modo_opcoes = [
-    _MODO_MOMENTO_ACELERACAO,
-    _MODO_MOMENTO_HISTORICO,
     _MODO_COMPLETA,
+    _MODO_COMPLETA_CENTRADA,
     _MODO_MEDIA,
-    _MODO_MEDIA_CASA_FORA,
     _MODO_TURNO,
-    _MODO_COMPLETA_LIMITES,
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
 modo: ModoProjecao
 tipo: TipoRegressao = "mandante_visitante"
-variante_acum: VarianteRegressaoAcumulada = "momento_aceleracao"
+variante_acum: VarianteRegressaoAcumulada = "completa"
 
-if modo_label.startswith("Regressão de Momento e Histórico"):
-    modo = "regressao_momento_historico"
-    variante_acum = "momento_historico"
-elif modo_label.startswith("Regressão de Momento e Aceleração"):
-    modo = "regressao_momento_aceleracao"
-    variante_acum = "momento_aceleracao"
-elif modo_label.startswith("Regressão Completa com Limites"):
+if modo_label.startswith("Regressão Completa (centrada)"):
     modo = "regressao_completa_limites"
     variante_acum = "completa_limites"
 elif modo_label.startswith("Regressão Completa"):
@@ -250,36 +230,30 @@ elif modo_label.startswith("Regressão Completa"):
     variante_acum = "completa"
 elif modo_label == _MODO_MEDIA:
     modo = "media_simples"
-elif modo_label == _MODO_MEDIA_CASA_FORA:
-    modo = "media_casa_fora"
 elif modo_label == _MODO_TURNO:
     modo = "repetir_turno"
 else:
-    modo = "regressao_momento_aceleracao"
-    variante_acum = "momento_aceleracao"
+    modo = "regressao_completa"
+    variante_acum = "completa"
 
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
-        if variante_acum == "completa_limites":
-            st.caption(
-                "Efeitos fixos com Rodada Centrada ao Quadrado "
-                f"(Rodada − {19}). Delta por rodada limitado a 3 pontos. "
-                "Forma = mistura de forma recente e forma geral, com peso da "
-                "recente caindo de 80% (próxima rodada) para 50% (daqui a 5) "
-                "até o piso de 20%. Significância: "
-                "*** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
-            )
-        else:
-            st.caption(
-                "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
-                "e, quando aplicável, Interação Rodada ao Quadrado × Time "
-                "(time de referência com interações nulas). "
-                "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal "
-                "(máximo 3 pontos por rodada). "
-                "Quando o modelo usa Forma Recente, o peso dela cai de 80% (próxima) "
-                "para 50% (daqui a 5) até o piso de 20%. "
-                "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
-            )
+        extra_centrada = (
+            "Usa Rodada Centrada ao Quadrado (Rodada − 19). "
+            if variante_acum == "completa_limites"
+            else ""
+        )
+        st.caption(
+            "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
+            "e, quando aplicável, Interação Rodada ao Quadrado × Time "
+            "(time de referência com interações nulas). "
+            f"{extra_centrada}"
+            "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal "
+            "(máximo 3 pontos por rodada). "
+            "O peso da Forma Recente cai de 80% (próxima) para 50% (daqui a 5) "
+            "até o piso de 20%, misturando com a forma geral. "
+            "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
+        )
         st.dataframe(
             tabela_regressao_acumulada_resumo(
                 _jogos_base, r_ini_proj, r_fim_proj, variante_acum
@@ -291,18 +265,15 @@ with st.expander("Detalhes do modelo"):
                 "R²": st.column_config.NumberColumn("R²", format="%.3f"),
             },
         )
-    elif modo in ("media_simples", "media_casa_fora"):
-        usar_forma = modo == "media_simples"
+    elif modo == "media_simples":
         st.caption(
-            "Projeção = média pts/jogo em casa ou fora × "
-            "média últimos 5 jogos / média campeonato no intervalo."
-            if usar_forma
-            else "Projeção = média pts/jogo em casa (mandante) ou fora (visitante), "
-            "sem ajuste por forma recente."
+            "Projeção = média pts/jogo em casa ou fora × fator de forma. "
+            "O fator mistura forma recente e forma geral: peso da recente cai de "
+            "80% (próxima rodada) para 50% (daqui a 5) até o piso de 20%."
         )
         st.dataframe(
             tabela_medias_simples_times(
-                _jogos_base, r_ini_proj, r_fim_proj, usar_forma=usar_forma
+                _jogos_base, r_ini_proj, r_fim_proj, usar_forma=True
             ),
             use_container_width=True,
             hide_index=True,
@@ -313,7 +284,8 @@ with st.expander("Detalhes do modelo"):
     else:
         st.caption(
             "Jogos do 1º turno usados como referência para espelhar a volta; "
-            "sem par já disputado, usa média casa/fora × forma recente."
+            "sem par já disputado, usa média casa/fora × forma recente "
+            "(com o mesmo decaimento de peso da forma)."
         )
         st.dataframe(
             tabela_jogos_primeiro_turno(_jogos_base),

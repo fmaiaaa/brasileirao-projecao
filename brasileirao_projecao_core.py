@@ -34,8 +34,8 @@ VarianteRegressaoAcumulada = Literal[
 NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
     "momento_aceleracao": "Regressão de Momento e Aceleração (efeitos fixos)",
     "momento_historico": "Regressão de Momento e Histórico (efeitos fixos)",
-    "completa": "Regressão Completa (efeitos fixos)",
-    "completa_limites": "Regressão Completa com Limites (efeitos fixos)",
+    "completa": "Regressão Completa (normal)",
+    "completa_limites": "Regressão Completa (centrada)",
 }
 
 MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
@@ -1831,6 +1831,7 @@ def aplicar_projecoes_media(
     r_fim: int,
     *,
     usar_forma: bool = True,
+    forma_decaindo: bool = True,
 ) -> tuple[list[Jogo], pd.DataFrame]:
     """Média casa/fora; opcionalmente × fator forma recente (pts decimais)."""
     jogos = [Jogo(**j.__dict__) for j in jogos]
@@ -1848,12 +1849,24 @@ def aplicar_projecoes_media(
         if usar_forma
         else "média casa/fora"
     )
+    if usar_forma and forma_decaindo:
+        origem += " (peso decaindo)"
     log_rows: list[dict] = []
+    ult_r_real = max((j.r for j in jogos if j.jogado), default=r_fim)
 
     for j in sorted(jogos, key=lambda x: (x.r, x.hora, x.mand)):
         if j.jogado:
             continue
-        pm, pv = projetar_jogo_media(j, medias, fatores)
+        fat_m = fatores[j.mand]
+        fat_v = fatores[j.vis]
+        if usar_forma and forma_decaindo:
+            w = peso_forma_recente_horizonte(max(1, j.r - ult_r_real))
+            fat_m = w * fat_m + (1.0 - w)
+            fat_v = w * fat_v + (1.0 - w)
+        mm = medias[j.mand]
+        mv = medias[j.vis]
+        pm = max(mm.get("casa", mm["geral"]) * fat_m, 0.0)
+        pv = max(mv.get("fora", mv["geral"]) * fat_v, 0.0)
         j.proj_pm, j.proj_pv = pm, pv
         j.origem = origem
         log_rows.append(
@@ -1884,7 +1897,9 @@ def aplicar_projecoes(
     if modo == "media_simples":
         return aplicar_projecoes_media(jogos, r_ini, r_fim, usar_forma=True)
     if modo == "media_casa_fora":
-        return aplicar_projecoes_media(jogos, r_ini, r_fim, usar_forma=False)
+        return aplicar_projecoes_media(
+            jogos, r_ini, r_fim, usar_forma=False, forma_decaindo=False
+        )
 
     jogos = [Jogo(**j.__dict__) for j in jogos]
     mapa = mapa_contrapartidas(jogos)
@@ -1896,8 +1911,9 @@ def aplicar_projecoes(
         t: fator_forma_recente(jogos, t, r_ini, r_fim)
         for t in times_do_calendario(jogos)
     }
-    label_fallback = "sem espelho — média casa/fora × forma recente"
+    label_fallback = "sem espelho — média casa/fora × forma recente (peso decaindo)"
     log_rows: list[dict] = []
+    ult_r_real = max((j.r for j in jogos if j.jogado), default=r_fim)
 
     for j in sorted(jogos, key=lambda x: (x.r, x.hora, x.mand)):
         if j.jogado:
@@ -1911,7 +1927,13 @@ def aplicar_projecoes(
             j.origem = f"espelho R{ref.r} ({ref.mand} {ref.placar} {ref.vis})"
             proj_txt = f"{pm} / {pv}"
         else:
-            pm, pv = projetar_jogo_media(j, medias, fatores)
+            w = peso_forma_recente_horizonte(max(1, j.r - ult_r_real))
+            fat_m = w * fatores[j.mand] + (1.0 - w)
+            fat_v = w * fatores[j.vis] + (1.0 - w)
+            mm = medias[j.mand]
+            mv = medias[j.vis]
+            pm = max(mm.get("casa", mm["geral"]) * fat_m, 0.0)
+            pv = max(mv.get("fora", mv["geral"]) * fat_v, 0.0)
             j.proj_pm, j.proj_pv = pm, pv
             j.origem = label_fallback
             proj_txt = f"{pm:.2f} / {pv:.2f}"
