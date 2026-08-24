@@ -151,7 +151,7 @@ if times_stats_graf and metricas_graf:
 else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 
-_r_fim_rodada = int(min(r_fim_stats, _ult_r))
+_r_fim_rodada = int(min(int(r_fim_stats), int(_ult_r)))
 _df_stats_rodada = estatisticas_por_rodada(
     _jogos_base, int(r_ini_stats), _r_fim_rodada
 )
@@ -184,7 +184,6 @@ if times_rodada_graf and metricas_rodada_graf:
             _df_stats_rodada,
             times_rodada_graf,
             metricas_rodada_graf,
-            r_max=_r_fim_rodada,
         )
     )
 else:

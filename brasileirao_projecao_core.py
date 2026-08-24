@@ -3218,11 +3218,13 @@ _TICKS_EIXO_POSICAO = [0, 5, 10, 15, 20]
 def _config_eixo_x_rodada(fig, r_max: float = 38) -> None:
     """Eixo X de rodada: somente 1, 9.5, 19, 28.5 e 38 (até r_max)."""
     r_max = max(1.0, float(r_max))
-    ticks = [t for t in TICKS_RODADA if t <= r_max + 1e-9]
+    ticks = [float(t) for t in TICKS_RODADA if float(t) <= r_max + 1e-9]
     fig.update_xaxes(
         tickmode="array",
         tickvals=ticks,
-        ticktext=[str(int(t)) if float(t).is_integer() else str(t) for t in ticks],
+        ticktext=[
+            str(int(t)) if float(t).is_integer() else str(t) for t in ticks
+        ],
         range=[0.5, min(38.0, r_max) + 0.5],
         showgrid=True,
         gridcolor="rgba(15, 23, 42, 0.08)",
@@ -3269,8 +3271,6 @@ def fig_estatisticas_por_rodada(
     df: pd.DataFrame,
     times: list[str],
     colunas: list[str],
-    *,
-    r_max: int | None = None,
 ):
     """Linhas por rodada no mesmo gráfico; cor por Time — Série."""
     import plotly.graph_objects as go
@@ -3286,11 +3286,19 @@ def fig_estatisticas_por_rodada(
         )
         return fig
 
-    if r_max is not None:
-        sub = sub[sub["Rodada"] <= r_max]
-    r_eixo = float(r_max) if r_max is not None else 38.0
-    if "Rodada" in sub.columns and not sub.empty:
-        r_eixo = min(r_eixo, float(sub["Rodada"].max()))
+    sub["Rodada"] = pd.to_numeric(sub["Rodada"], errors="coerce")
+    sub = sub.dropna(subset=["Rodada"])
+    sub["Rodada"] = sub["Rodada"].astype(int)
+    if sub.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Sem dados de rodada",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        return fig
+
+    r_eixo = float(sub["Rodada"].max())
 
     ordem_times = [t for t in times if t in sub["Time"].unique()]
     fig = go.Figure()
@@ -3301,8 +3309,8 @@ def fig_estatisticas_por_rodada(
             nome = f"{time} — {col}"
             fig.add_trace(
                 go.Scatter(
-                    x=s["Rodada"],
-                    y=s[col],
+                    x=s["Rodada"].tolist(),
+                    y=s[col].tolist(),
                     mode="lines+markers",
                     name=nome,
                     line=dict(
