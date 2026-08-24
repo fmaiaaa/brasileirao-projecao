@@ -1,7 +1,7 @@
 """Estilo visual do app Brasileirão (inspirado no velocímetro, tema futebol)."""
 from __future__ import annotations
 
-# Paleta futebol (gramado / estádio) — sem cores Direcional
+# Paleta futebol (gramado / estádio) - sem cores Direcional
 COR_VERDE_ESC = "#14532d"
 COR_VERDE = "#15803d"
 COR_VERDE_CLARO = "#22c55e"

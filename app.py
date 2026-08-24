@@ -1,4 +1,4 @@
-"""App Streamlit — Projeção Brasileirão 2026."""
+"""App Streamlit - Projeção Brasileirão 2026."""
 from __future__ import annotations
 
 import html
@@ -141,7 +141,7 @@ with c_stats2:
         key="stats_r_fim",
     )
 if r_fim_stats < r_ini_stats:
-    st.warning("Rodada fim (estatísticas) menor que início — usando fim = início.")
+    st.warning("Rodada fim (estatísticas) menor que início - usando fim = início.")
     r_fim_stats = r_ini_stats
 
 _df_stats = tabela_estatisticas_times(_jogos_base, int(r_ini_stats), int(r_fim_stats))
@@ -209,8 +209,8 @@ with c_graf_r2:
     )
 
 incluir_projecao_rodada = st.toggle(
-    "Incluir projeções no gráfico (preenche rodadas até a 38)",
-    value=True,
+    "Incluir projeções no gráfico",
+    value=False,
     key="stats_rodada_projecao",
 )
 
@@ -248,7 +248,7 @@ r_ini_proj = 1
 r_fim_proj = int(min(_ult_r, 38))
 
 _MODO_REG = (
-    "Regressão — "
+    "Regressão - "
     "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + "
     "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + "
     "Forma Recente + Força dos Adversários Passados + Proporção Casa"
@@ -334,15 +334,37 @@ jogos_proj, df_log = aplicar_projecoes(
 )
 
 titulo_secao("Classificação")
+_df_classif = tabela_comparativa_posicoes(_jogos_base, jogos_proj)
 st.dataframe(
-    tabela_comparativa_posicoes(_jogos_base, jogos_proj),
+    _df_classif,
     use_container_width=True,
     hide_index=True,
+    column_config={
+        "Posição Projetada": st.column_config.NumberColumn("Posição Projetada"),
+        "Time": st.column_config.TextColumn("Time", pinned="left"),
+        "Posição Atual": st.column_config.NumberColumn("Posição Atual"),
+        "Delta": st.column_config.NumberColumn("Delta"),
+        "Pts Projetados": st.column_config.NumberColumn(
+            "Pontuação Projetada", format="%.1f"
+        ),
+        "Prob. Campeão": st.column_config.NumberColumn(
+            "Probabilidade de ser campeão", format="%.1f%%"
+        ),
+        "Prob. G4": st.column_config.NumberColumn(
+            "Probabilidade de G4", format="%.1f%%"
+        ),
+        "Prob. G6": st.column_config.NumberColumn(
+            "Probabilidade de G6", format="%.1f%%"
+        ),
+        "Prob. Z4": st.column_config.NumberColumn(
+            "Probabilidade de Z4", format="%.1f%%"
+        ),
+    },
 )
 
 with st.expander("Jogos projetados"):
     if df_log.empty:
-        st.success("Todos os jogos já têm placar — nada a projetar.")
+        st.success("Todos os jogos já têm placar - nada a projetar.")
     else:
         st.dataframe(df_log, use_container_width=True, hide_index=True)
 
@@ -357,8 +379,9 @@ if times_graf:
     mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
     mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
     probs_finais = probabilidades_cenarios_finais(jogos_proj)
+    times_graf_ord = sorted(times_graf)
 
-    for time in times_graf:
+    for time in times_graf_ord:
         pa, pta = mapa_atual.get(time, (0, 0))
         pf, ptf = mapa_final.get(time, (0, 0))
         pr = probs_finais.get(time, {})

@@ -31,9 +31,9 @@ Todos os modos projetam **pontuação decimal por jogo** (ex.: 2,2 pts), sem arr
 Nas regressões, o ganho por rodada é limitado a **no máximo 3 pontos**.
 Quando o modo usa Forma Recente, o peso dela na projeção cai de **80%** (próxima rodada) para **50%** (daqui a 5) até o piso de **20%**, misturando com a forma geral.
 
-1. **Regressão** — Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + Interação Rodada × Time + Interação Rodada ao Quadrado × Time + Forma Recente + Força dos Adversários Passados + Proporção Casa
-2. **Média casa x fora × forma recente** — com o mesmo decaimento de peso da forma
-3. **Repetir 1º turno** — espelha ida/volta já disputada; fallback pela média × forma recente (com decaimento)
+1. **Regressão** - Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + Interação Rodada × Time + Interação Rodada ao Quadrado × Time + Forma Recente + Força dos Adversários Passados + Proporção Casa
+2. **Média casa x fora × forma recente** - com o mesmo decaimento de peso da forma
+3. **Repetir 1º turno** - espelha ida/volta já disputada; fallback pela média × forma recente (com decaimento)
 
 Desempate na classificação: vitórias → saldo de gols → gols marcados → confronto direto entre empatados.
 

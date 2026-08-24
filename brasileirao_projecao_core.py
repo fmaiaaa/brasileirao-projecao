@@ -1,4 +1,4 @@
-"""Lógica de projeção — Brasileirão 2026."""
+"""Lógica de projeção - Brasileirão 2026."""
 from __future__ import annotations
 
 import re
@@ -1942,7 +1942,7 @@ def aplicar_projecoes(
         t: fator_forma_recente(jogos, t, r_ini, r_fim)
         for t in times_do_calendario(jogos)
     }
-    label_fallback = "sem espelho — média casa/fora × forma recente (peso decaindo)"
+    label_fallback = "sem espelho - média casa/fora × forma recente (peso decaindo)"
     log_rows: list[dict] = []
     ult_r_real = max((j.r for j in jogos if j.jogado), default=r_fim)
 
@@ -2329,8 +2329,33 @@ def tabela_comparativa_posicoes(
     )
     df = atual.merge(proj[["Time", "Posição Projetada", "Pts Projetados"]], on="Time")
     df["Delta"] = df["Posição Atual"] - df["Posição Projetada"]
+    probs = probabilidades_cenarios_finais(jogos_proj)
+    df["Prob. Campeão"] = df["Time"].map(
+        lambda t: round(100.0 * float(probs.get(t, {}).get("campeao", 0.0)), 1)
+    )
+    df["Prob. G4"] = df["Time"].map(
+        lambda t: round(100.0 * float(probs.get(t, {}).get("g4", 0.0)), 1)
+    )
+    df["Prob. G6"] = df["Time"].map(
+        lambda t: round(100.0 * float(probs.get(t, {}).get("g6", 0.0)), 1)
+    )
+    df["Prob. Z4"] = df["Time"].map(
+        lambda t: round(100.0 * float(probs.get(t, {}).get("z4", 0.0)), 1)
+    )
     df = df.sort_values("Posição Projetada")
-    return df[["Time", "Posição Atual", "Posição Projetada", "Delta"]]
+    return df[
+        [
+            "Posição Projetada",
+            "Time",
+            "Posição Atual",
+            "Delta",
+            "Pts Projetados",
+            "Prob. Campeão",
+            "Prob. G4",
+            "Prob. G6",
+            "Prob. Z4",
+        ]
+    ]
 
 
 def mapa_posicao_pontos(
@@ -2374,7 +2399,7 @@ def probabilidades_cenarios_finais(
     1) Sorteia W/D/L de cada jogo pendente com probs calibradas aos pts esperados.
     2) Recentra na projeção (com gaps comprimidos) para o líder projetado seguir
        como favorito, sem odds extremas tipo 95%×4% no meio do campeonato.
-    3) Soma ruído extra ∝ √(jogos restantes) — na prática, ~14 jogos ainda
+    3) Soma ruído extra ∝ √(jogos restantes) - na prática, ~14 jogos ainda
        abrem bastante o leque de cenários.
 
     Retorna, por time: campeao, g4, g6, z4 (frações 0–1).
@@ -3183,7 +3208,7 @@ def fig_estatisticas_times(
         )
         return fig
 
-    ordem = [t for t in times if t in sub["Time"].values]
+    ordem = sorted(t for t in times if t in sub["Time"].values)
     sub = sub.set_index("Time").loc[ordem]
 
     fig = go.Figure()
@@ -3204,7 +3229,7 @@ def fig_estatisticas_times(
         )
 
     titulo = (
-        f"Comparativo — {colunas[0]}"
+        f"Comparativo - {colunas[0]}"
         if len(colunas) == 1
         else "Comparativo de estatísticas"
     )
@@ -3572,14 +3597,14 @@ def fig_estatisticas_por_rodada(
             elif um_time and uma_serie:
                 nome = col
             else:
-                nome = f"{time} — {col}"
+                nome = f"{time} - {col}"
             cor = _PALETA_SERIES[k % len(_PALETA_SERIES)]
             s_real = s[~s["Projetado"]]
             s_proj = s[s["Projetado"]]
 
             xs_real = s_real["Rodada"].tolist()
             ys_real = s_real[col].tolist()
-            hover_nome = f"{time} — {col}"
+            hover_nome = f"{time} - {col}"
             if xs_real:
                 fig.add_trace(
                     go.Scatter(
@@ -3632,7 +3657,7 @@ def fig_estatisticas_por_rodada(
             k += 1
 
     titulo = (
-        f"Evolução rodada a rodada — {colunas[0]}"
+        f"Evolução rodada a rodada - {colunas[0]}"
         if len(colunas) == 1
         else "Evolução rodada a rodada"
     )
