@@ -193,26 +193,17 @@ titulo_secao("Configuração da projeção")
 r_ini_proj = 1
 r_fim_proj = int(min(_ult_r, 38))
 
-_MODO_REG_NORMAL = (
-    "Regressão (Normal) — "
+_MODO_REG = (
+    "Regressão — "
     "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + "
     "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + "
     "Forma Recente + Força dos Adversários Passados + Proporção Casa"
-)
-_MODO_REG_CENTRADA = (
-    "Regressão (Centrada) — "
-    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada Centrada + "
-    "Rodada Centrada ao Quadrado + Interação Rodada Centrada × Time + "
-    "Interação Rodada Centrada ao Quadrado × Time + Forma Recente + "
-    "Força dos Adversários Passados + Proporção Casa "
-    "(Rodada Centrada = Rodada − 19)"
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
 _MODO_TURNO = "Repetir 1º turno"
 
 _modo_opcoes = [
-    _MODO_REG_NORMAL,
-    _MODO_REG_CENTRADA,
+    _MODO_REG,
     _MODO_MEDIA,
     _MODO_TURNO,
 ]
@@ -222,10 +213,7 @@ modo: ModoProjecao
 tipo: TipoRegressao = "mandante_visitante"
 variante_acum: VarianteRegressaoAcumulada = "completa"
 
-if modo_label.startswith("Regressão (Centrada)"):
-    modo = "regressao_completa_limites"
-    variante_acum = "completa_limites"
-elif modo_label.startswith("Regressão (Normal)"):
+if modo_label.startswith("Regressão"):
     modo = "regressao_completa"
     variante_acum = "completa"
 elif modo_label == _MODO_MEDIA:
@@ -238,17 +226,10 @@ else:
 
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
-        extra_centrada = (
-            "Usa Rodada Centrada e Rodada Centrada ao Quadrado "
-            "(Rodada − 19). "
-            if variante_acum == "completa_limites"
-            else ""
-        )
         st.caption(
             "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
             "e Interação Rodada ao Quadrado × Time "
             "(time de referência com interações nulas). "
-            f"{extra_centrada}"
             "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal "
             "(máximo 3 pontos por rodada). "
             "O peso da Forma Recente cai de 80% (próxima) para 50% (daqui a 5) "
