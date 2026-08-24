@@ -16,6 +16,7 @@ ModoProjecao = Literal[
     "regressao_momento_aceleracao",
     "regressao_momento_historico",
     "regressao_completa",
+    "regressao_completa_limites",
 ]
 TipoRegressao = Literal["simples", "mandante_visitante"]
 VarianteRegressao = Literal[
@@ -33,14 +34,15 @@ VarianteRegressaoAcumulada = Literal[
 NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
     "momento_aceleracao": "Regressão de Momento e Aceleração (efeitos fixos)",
     "momento_historico": "Regressão de Momento e Histórico (efeitos fixos)",
-    "completa": "Regressão Completa",
-    "completa_limites": "Regressão Completa (centrada)",
+    "completa": "Regressão (Normal)",
+    "completa_limites": "Regressão (Centrada)",
 }
 
 MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
     "regressao_momento_aceleracao": "momento_aceleracao",
     "regressao_momento_historico": "momento_historico",
     "regressao_completa": "completa",
+    "regressao_completa_limites": "completa_limites",
 }
 
 
