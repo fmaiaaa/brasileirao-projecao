@@ -287,6 +287,20 @@ def aplicar_estilo() -> None:
         .secao-titulo--grafico {{
             margin: 0.75rem 0 0.55rem 0;
         }}
+        @media (max-width: 768px) {{
+            .secao-titulo--grafico {{
+                margin: 0.35rem 0 0.1rem 0 !important;
+            }}
+            [data-testid="stPlotlyChart"] {{
+                margin-top: 0 !important;
+                margin-bottom: 0 !important;
+                padding-bottom: 0 !important;
+            }}
+            [data-testid="stExpander"]:has(.grafico-legenda-list) {{
+                margin-top: 0.15rem !important;
+                margin-bottom: 0.35rem !important;
+            }}
+        }}
         .vel-kpi-row--duo {{
             display: flex;
             flex-wrap: nowrap;
@@ -363,7 +377,7 @@ def aplicar_estilo() -> None:
         @media (max-width: 768px) {{
             [data-testid="stExpander"]:has(.grafico-legenda-list) {{
                 display: block !important;
-                margin-top: 0.65rem !important;
+                margin-top: 0.15rem !important;
             }}
             [data-testid="stPlotlyChart"] .bartext,
             [data-testid="stPlotlyChart"] .textpoint,
@@ -428,7 +442,8 @@ def aplicar_estilo() -> None:
             [data-testid="stPlotlyChart"] {{
                 width: 100% !important;
                 overflow-x: hidden !important;
-                margin-bottom: 0.35rem !important;
+                margin-top: 0 !important;
+                margin-bottom: 0 !important;
             }}
             [data-testid="stPlotlyChart"] .legend,
             [data-testid="stPlotlyChart"] g.legend,

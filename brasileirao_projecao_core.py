@@ -2984,6 +2984,12 @@ def fig_evolucao_times(
     ]
     fig = go.Figure()
 
+    r_recente = 1.0
+    for ev in evolucoes:
+        for seg in ev.segmentos:
+            if not seg.tracejado and seg.rodadas:
+                r_recente = max(r_recente, float(max(seg.rodadas)))
+
     for i, ev in enumerate(evolucoes):
         cor = (cores or {}).get(ev.time, palette[i % len(palette)])
         hover_tpl = (
@@ -3008,7 +3014,9 @@ def fig_evolucao_times(
                     name=ev.time,
                     line=dict(color=cor, width=2.5, dash=dash),
                     marker=dict(size=5, color=cor),
-                    text=_rotulos_em_ticks(seg.rodadas, seg.pontos),
+                    text=_rotulos_em_ticks(
+                        seg.rodadas, seg.pontos, r_recente=r_recente
+                    ),
                     textposition="top center",
                     textfont=dict(size=10, color=cor),
                     legendgroup=ev.time,
@@ -3026,7 +3034,7 @@ def fig_evolucao_times(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
-        **_layout_grafico("Pontuação acumulada por rodada (1–38)"),
+        **_layout_grafico("Pontuação acumulada por rodada"),
     )
     _config_eixo_x_rodada(fig)
     fig.update_yaxes(
@@ -3057,6 +3065,12 @@ def fig_evolucao_posicao_times(
     ]
     fig = go.Figure()
 
+    r_recente = 1.0
+    for ev in evolucoes:
+        for seg in ev.segmentos:
+            if not seg.tracejado and seg.rodadas:
+                r_recente = max(r_recente, float(max(seg.rodadas)))
+
     for i, ev in enumerate(evolucoes):
         cor = (cores or {}).get(ev.time, palette[i % len(palette)])
         hover_tpl = (
@@ -3078,7 +3092,9 @@ def fig_evolucao_posicao_times(
                     name=ev.time,
                     line=dict(color=cor, width=2.5, dash=dash),
                     marker=dict(size=5, color=cor),
-                    text=_rotulos_em_ticks(seg.rodadas, seg.pontos, "Posição"),
+                    text=_rotulos_em_ticks(
+                        seg.rodadas, seg.pontos, "Posição", r_recente=r_recente
+                    ),
                     textposition="top center",
                     textfont=dict(size=10, color=cor),
                     legendgroup=ev.time,
@@ -3268,11 +3284,24 @@ def _fmt_rotulo(val, col: str | None = None) -> str:
     return f"{f:.2f}"
 
 
-def _rotulos_em_ticks(xs, ys, col: str | None = None) -> list[str]:
-    """Rótulos nos ticks de rodada (1, 9.5, 19, …) — ocultos no mobile via CSS."""
+def _rotulos_em_ticks(
+    xs,
+    ys,
+    col: str | None = None,
+    *,
+    r_recente: float | None = None,
+) -> list[str]:
+    """Rótulos em 1, 9.5, 28.5, 38 e na rodada mais recente (no lugar de 19)."""
+    if not xs:
+        return []
+    if r_recente is None:
+        r_recente = max(float(x) for x in xs)
+    ticks_label = [t for t in TICKS_RODADA if abs(float(t) - 19.0) > 1e-9]
+    alvos = {float(t) for t in ticks_label}
+    alvos.add(float(r_recente))
     return [
         _fmt_rotulo(y, col)
-        if any(abs(float(x) - float(t)) < 1e-9 for t in TICKS_RODADA)
+        if any(abs(float(x) - a) < 1e-9 for a in alvos)
         else ""
         for x, y in zip(xs, ys, strict=False)
     ]
@@ -3407,7 +3436,7 @@ def fig_estatisticas_por_rodada(
                     name=nome,
                     line=dict(color=cor, width=2.5),
                     marker=dict(size=5),
-                    text=_rotulos_em_ticks(xs, ys, col),
+                    text=_rotulos_em_ticks(xs, ys, col, r_recente=r_eixo),
                     textposition="top center",
                     textfont=dict(size=9, color=cor),
                     hovertemplate=(
