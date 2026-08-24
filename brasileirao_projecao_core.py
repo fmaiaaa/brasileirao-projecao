@@ -3212,11 +3212,25 @@ def colunas_estatisticas_rodada_grafico(df: pd.DataFrame) -> list[str]:
     return [c for c in COLUNAS_ESTATISTICAS_GRAFICO if c in df.columns]
 
 
-_TICKS_EIXO_POSICAO = [0, 5, 10, 15, 20]
+_TICKS_EIXO_POSICAO = [1, 5, 10, 15, 20]
 
 
 def _config_eixo_x_rodada(fig, r_max: float = 38) -> None:
-    """Eixo X de rodada: somente 1, 9.5, 19, 28.5 e 38 (até r_max)."""
+    """Eixo X de rodada: no desktop, rótulo em todas as rodadas."""
+    r_max = max(1.0, float(r_max))
+    r_hi = min(38.0, r_max)
+    fig.update_xaxes(
+        dtick=1,
+        tick0=1,
+        range=[0.5, r_hi + 0.5],
+        showgrid=True,
+        gridcolor="rgba(15, 23, 42, 0.08)",
+        zeroline=False,
+    )
+
+
+def _config_eixo_x_rodada_mobile(fig, r_max: float = 38) -> None:
+    """Eixo X esparsado para mobile: 1, 9.5, 19, 28.5, 38."""
     r_max = max(1.0, float(r_max))
     ticks = [float(t) for t in TICKS_RODADA if float(t) <= r_max + 1e-9]
     fig.update_xaxes(
@@ -3244,7 +3258,7 @@ def _kwargs_eixo_y(col: str) -> dict:
             tickmode="array",
             tickvals=_TICKS_EIXO_POSICAO,
             ticktext=[str(t) for t in _TICKS_EIXO_POSICAO],
-            range=[-0.5, 20.5],
+            range=[0.5, 20.5],
         )
     return kwargs
 

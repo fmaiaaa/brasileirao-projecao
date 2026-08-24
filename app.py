@@ -5,6 +5,7 @@ import streamlit as st
 
 from brasileirao_estilo import (
     aplicar_estilo,
+    aplicar_js_graficos_mobile,
     bloco_classificacao_time,
     cabecalho_pagina,
     kpi_row,
@@ -59,6 +60,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 aplicar_estilo()
+aplicar_js_graficos_mobile()
 cabecalho_pagina("Projeção Brasileirão 2026")
 
 try:
