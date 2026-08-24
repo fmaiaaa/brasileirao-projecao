@@ -256,6 +256,8 @@ def aplicar_estilo() -> None:
         [data-testid="stTable"] {{
             background-color: #ffffff !important;
             border-radius: 12px;
+            overflow: auto !important;
+            -webkit-overflow-scrolling: touch;
         }}
         /* Coluna Time fixa na tabela de estatísticas (fallback CSS) */
         [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {{

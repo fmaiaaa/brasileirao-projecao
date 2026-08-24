@@ -68,6 +68,22 @@ def _bloquear_interacao_fig(fig) -> None:
     fig.update_yaxes(fixedrange=True)
 
 
+def _tabela(df, *, column_config=None, key=None) -> None:
+    """Tabela com sort e scroll, sem rearranjar colunas (arrastar)."""
+    kwargs = dict(
+        use_container_width=True,
+        hide_index=True,
+        # No Streamlit, seleção de coluna desliga o drag-and-drop de colunas
+        selection_mode="multi-column",
+        on_select="ignore",
+    )
+    if column_config is not None:
+        kwargs["column_config"] = column_config
+    if key is not None:
+        kwargs["key"] = key
+    st.dataframe(df, **kwargs)
+
+
 def _html_legenda_mobile(itens: list[dict[str, str]]) -> str:
     linhas = []
     for item in itens:
@@ -165,13 +181,12 @@ if r_fim_stats < r_ini_stats:
 
 _df_stats = tabela_estatisticas_times(_jogos_base, int(r_ini_stats), int(r_fim_stats))
 
-st.dataframe(
+_tabela(
     _df_stats,
-    use_container_width=True,
-    hide_index=True,
     column_config={
         "Time": st.column_config.TextColumn("Time", pinned="left", width="medium"),
     },
+    key="tbl_stats",
 )
 
 titulo_secao("Gráfico de estatísticas")
@@ -281,7 +296,7 @@ else:
 
 with st.expander("Dados carregados"):
     if _df_fonte is not None:
-        st.dataframe(_df_fonte, use_container_width=True, hide_index=True)
+        _tabela(_df_fonte, key="tbl_fonte")
     else:
         st.info("Sem preview tabular.")
 
@@ -333,16 +348,15 @@ with st.expander("Detalhes do modelo"):
             "até o piso de 20%, misturando com a forma geral. "
             "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
-        st.dataframe(
+        _tabela(
             tabela_regressao_acumulada_resumo(
                 _jogos_base, r_ini_proj, r_fim_proj, variante_acum
             ),
-            use_container_width=True,
-            hide_index=True,
             column_config={
                 "Time": st.column_config.TextColumn("Time", pinned="left"),
                 "R²": st.column_config.NumberColumn("R²", format="%.3f"),
             },
+            key="tbl_reg",
         )
     elif modo == "media_simples":
         st.caption(
@@ -350,15 +364,14 @@ with st.expander("Detalhes do modelo"):
             "O fator mistura forma recente e forma geral: peso da recente cai de "
             "80% (próxima rodada) para 50% (daqui a 5) até o piso de 20%."
         )
-        st.dataframe(
+        _tabela(
             tabela_medias_simples_times(
                 _jogos_base, r_ini_proj, r_fim_proj, usar_forma=True
             ),
-            use_container_width=True,
-            hide_index=True,
             column_config={
                 "Time": st.column_config.TextColumn("Time", pinned="left"),
             },
+            key="tbl_media",
         )
     else:
         st.caption(
@@ -366,11 +379,7 @@ with st.expander("Detalhes do modelo"):
             "sem par já disputado, usa média casa/fora × forma recente "
             "(com o mesmo decaimento de peso da forma)."
         )
-        st.dataframe(
-            tabela_jogos_primeiro_turno(_jogos_base),
-            use_container_width=True,
-            hide_index=True,
-        )
+        _tabela(tabela_jogos_primeiro_turno(_jogos_base), key="tbl_turno")
 
 jogos_proj, df_log = aplicar_projecoes(
     _jogos_base, modo, r_ini_proj, r_fim_proj, tipo
@@ -378,10 +387,8 @@ jogos_proj, df_log = aplicar_projecoes(
 
 titulo_secao("Classificação")
 _df_classif = tabela_comparativa_posicoes(_jogos_base, jogos_proj)
-st.dataframe(
+_tabela(
     _df_classif,
-    use_container_width=True,
-    hide_index=True,
     column_config={
         "Posição Projetada": st.column_config.NumberColumn("Posição Projetada"),
         "Time": st.column_config.TextColumn("Time", pinned="left"),
@@ -403,13 +410,14 @@ st.dataframe(
             "Probabilidade de Z4", format="%.1f%%"
         ),
     },
+    key="tbl_classif",
 )
 
 with st.expander("Jogos projetados"):
     if df_log.empty:
         st.success("Todos os jogos já têm placar - nada a projetar.")
     else:
-        st.dataframe(df_log, use_container_width=True, hide_index=True)
+        _tabela(df_log, key="tbl_jogos_proj")
 
 titulo_secao("Evolução por rodada")
 times_graf = st.multiselect(
