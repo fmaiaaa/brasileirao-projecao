@@ -284,6 +284,9 @@ def aplicar_estilo() -> None:
             margin: 1.25rem 0 0.85rem 0;
             font-size: 1.15rem;
         }}
+        .secao-titulo--grafico {{
+            margin: 0.75rem 0 0.55rem 0;
+        }}
         .vel-kpi-row--duo {{
             display: flex;
             flex-wrap: nowrap;
@@ -350,6 +353,14 @@ def aplicar_estilo() -> None:
         @media (min-width: 769px) {{
             span.grafico-legenda-anchor ~ div[data-testid="stExpander"] {{
                 display: none !important;
+            }}
+        }}
+        @media (max-width: 768px) {{
+            [data-testid="stPlotlyChart"] .bartext,
+            [data-testid="stPlotlyChart"] .textpoint,
+            [data-testid="stPlotlyChart"] g.textpoint {{
+                display: none !important;
+                visibility: hidden !important;
             }}
         }}
 
@@ -611,3 +622,13 @@ def titulo_secao(texto: str) -> None:
     import streamlit as st
 
     st.markdown(f'<p class="secao-titulo">{texto}</p>', unsafe_allow_html=True)
+
+
+def titulo_grafico(texto: str) -> None:
+    """Título acima do gráfico, no mesmo estilo das seções."""
+    import streamlit as st
+
+    st.markdown(
+        f'<p class="secao-titulo secao-titulo--grafico">{texto}</p>',
+        unsafe_allow_html=True,
+    )

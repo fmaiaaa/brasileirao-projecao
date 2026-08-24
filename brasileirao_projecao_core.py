@@ -3004,10 +3004,13 @@ def fig_evolucao_times(
                 go.Scatter(
                     x=seg.rodadas,
                     y=seg.pontos,
-                    mode="lines+markers",
+                    mode="lines+markers+text",
                     name=ev.time,
                     line=dict(color=cor, width=2.5, dash=dash),
                     marker=dict(size=5, color=cor),
+                    text=_rotulos_em_ticks(seg.rodadas, seg.pontos),
+                    textposition="top center",
+                    textfont=dict(size=10, color=cor),
                     legendgroup=ev.time,
                     showlegend=(j == 0),
                     customdata=cd,
@@ -3016,7 +3019,6 @@ def fig_evolucao_times(
             )
 
     fig.update_layout(
-        title="Pontuação acumulada por rodada (1–38)",
         xaxis_title="Rodada",
         yaxis_title="Pontos acumulados",
         hovermode="x unified",
@@ -3024,7 +3026,7 @@ def fig_evolucao_times(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
-        **_layout_legenda_desktop(),
+        **_layout_grafico("Pontuação acumulada por rodada (1–38)"),
     )
     _config_eixo_x_rodada(fig)
     fig.update_yaxes(
@@ -3072,10 +3074,13 @@ def fig_evolucao_posicao_times(
                 go.Scatter(
                     x=seg.rodadas,
                     y=seg.pontos,
-                    mode="lines+markers",
+                    mode="lines+markers+text",
                     name=ev.time,
                     line=dict(color=cor, width=2.5, dash=dash),
                     marker=dict(size=5, color=cor),
+                    text=_rotulos_em_ticks(seg.rodadas, seg.pontos, "Posição"),
+                    textposition="top center",
+                    textfont=dict(size=10, color=cor),
                     legendgroup=ev.time,
                     showlegend=(j == 0),
                     customdata=cd,
@@ -3084,7 +3089,6 @@ def fig_evolucao_posicao_times(
             )
 
     fig.update_layout(
-        title="Posição por rodada",
         xaxis_title="Rodada",
         yaxis_title="Posição",
         hovermode="x unified",
@@ -3092,7 +3096,7 @@ def fig_evolucao_posicao_times(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
-        **_layout_legenda_desktop(),
+        **_layout_grafico("Posição por rodada"),
     )
     _config_eixo_x_rodada(fig)
     _config_eixo_y_posicao(fig, "Posição")
@@ -3141,7 +3145,7 @@ def fig_estatisticas_times(
     if sub.empty or not colunas:
         fig = go.Figure()
         fig.update_layout(
-            title="Selecione times e estatísticas",
+            title=None,
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
@@ -3152,12 +3156,17 @@ def fig_estatisticas_times(
 
     fig = go.Figure()
     for i, col in enumerate(colunas):
+        vals = sub[col].tolist()
         fig.add_trace(
             go.Bar(
                 name=col,
                 x=sub.index.tolist(),
-                y=sub[col].tolist(),
+                y=vals,
                 marker_color=_PALETA_SERIES[i % len(_PALETA_SERIES)],
+                text=[_fmt_rotulo(v, col) for v in vals],
+                textposition="outside",
+                cliponaxis=False,
+                textfont=dict(size=10),
                 hovertemplate="%{x}<br>" + col + ": %{y}<extra></extra>",
             )
         )
@@ -3168,7 +3177,6 @@ def fig_estatisticas_times(
         else "Comparativo de estatísticas"
     )
     fig.update_layout(
-        title=titulo,
         xaxis_title="Time",
         yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
         barmode="group",
@@ -3177,13 +3185,14 @@ def fig_estatisticas_times(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
-        **_layout_legenda_desktop(),
+        **_layout_grafico(titulo),
     )
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(
         showgrid=True,
         gridcolor="rgba(15, 23, 42, 0.08)",
         zeroline=False,
+        automargin=True,
     )
     return fig
 
@@ -3216,8 +3225,50 @@ def _layout_legenda_desktop() -> dict:
     """Legenda horizontal acima do gráfico (layout original no PC)."""
     return {
         "legend": dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        "margin": dict(t=80),
+        "margin": dict(t=60),
     }
+
+
+def _layout_grafico(titulo: str) -> dict:
+    """Layout padrão: sem título no Plotly (título fica fora, estilo seção)."""
+    layout = _layout_legenda_desktop()
+    layout["title"] = None
+    layout["meta"] = {"titulo": titulo}
+    return layout
+
+
+def titulo_fig(fig) -> str | None:
+    meta = fig.layout.meta
+    if isinstance(meta, dict):
+        t = meta.get("titulo")
+        return str(t) if t else None
+    return None
+
+
+def _fmt_rotulo(val, col: str | None = None) -> str:
+    if val is None:
+        return ""
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return str(val)
+    if col == "Posição":
+        return f"{int(round(f))}º"
+    if col and "média" in col.lower():
+        return f"{f:.2f}"
+    if abs(f - round(f)) < 1e-9:
+        return str(int(round(f)))
+    return f"{f:.2f}"
+
+
+def _rotulos_em_ticks(xs, ys, col: str | None = None) -> list[str]:
+    """Rótulos nos ticks de rodada (1, 9.5, 19, …) — ocultos no mobile via CSS."""
+    return [
+        _fmt_rotulo(y, col)
+        if any(abs(float(x) - float(t)) < 1e-9 for t in TICKS_RODADA)
+        else ""
+        for x, y in zip(xs, ys, strict=False)
+    ]
 
 
 def extrair_itens_legenda(fig) -> list[dict[str, str]]:
@@ -3311,7 +3362,7 @@ def fig_estatisticas_por_rodada(
     if sub.empty or not colunas:
         fig = go.Figure()
         fig.update_layout(
-            title="Selecione times e estatísticas",
+            title=None,
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
@@ -3323,7 +3374,7 @@ def fig_estatisticas_por_rodada(
     if sub.empty:
         fig = go.Figure()
         fig.update_layout(
-            title="Sem dados de rodada",
+            title=None,
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
@@ -3338,16 +3389,20 @@ def fig_estatisticas_por_rodada(
         s = sub[sub["Time"] == time].sort_values("Rodada")
         for col in colunas:
             nome = f"{time} — {col}"
+            xs = s["Rodada"].tolist()
+            ys = s[col].tolist()
+            cor = _PALETA_SERIES[k % len(_PALETA_SERIES)]
             fig.add_trace(
                 go.Scatter(
-                    x=s["Rodada"].tolist(),
-                    y=s[col].tolist(),
-                    mode="lines+markers",
+                    x=xs,
+                    y=ys,
+                    mode="lines+markers+text",
                     name=nome,
-                    line=dict(
-                        color=_PALETA_SERIES[k % len(_PALETA_SERIES)], width=2.5
-                    ),
+                    line=dict(color=cor, width=2.5),
                     marker=dict(size=5),
+                    text=_rotulos_em_ticks(xs, ys, col),
+                    textposition="top center",
+                    textfont=dict(size=9, color=cor),
                     hovertemplate=(
                         f"{nome}<br>Rodada %{{x}}<br>{col}: %{{y}}<extra></extra>"
                     ),
@@ -3361,7 +3416,6 @@ def fig_estatisticas_por_rodada(
         else "Evolução rodada a rodada"
     )
     fig.update_layout(
-        title=titulo,
         xaxis_title="Rodada",
         yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
         hovermode="x unified",
@@ -3369,7 +3423,7 @@ def fig_estatisticas_por_rodada(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
-        **_layout_legenda_desktop(),
+        **_layout_grafico(titulo),
     )
     _config_eixo_x_rodada(fig, r_eixo)
     if len(colunas) == 1:

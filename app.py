@@ -11,6 +11,7 @@ from brasileirao_estilo import (
     cabecalho_pagina,
     kpi_row,
     rodape_desenvolvedor,
+    titulo_grafico,
     titulo_secao,
 )
 from brasileirao_projecao_core import (
@@ -30,6 +31,7 @@ from brasileirao_projecao_core import (
     fig_evolucao_times,
     fig_evolucao_posicao_times,
     extrair_itens_legenda,
+    titulo_fig,
     kpis_globais,
     mapa_posicao_pontos,
     probabilidades_cenarios_finais,
@@ -60,6 +62,9 @@ def _html_legenda_mobile(itens: list[dict[str, str]]) -> str:
 
 
 def _grafico(fig) -> None:
+    titulo = titulo_fig(fig)
+    if titulo:
+        titulo_grafico(titulo)
     st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CONFIG)
     itens = extrair_itens_legenda(fig)
     if not itens:
