@@ -3117,26 +3117,41 @@ def colunas_estatisticas_grafico(df: pd.DataFrame) -> list[str]:
     return [c for c in COLUNAS_ESTATISTICAS_GRAFICO if c in df.columns]
 
 
+_PALETA_SERIES = [
+    "#14532d",
+    "#ca8a04",
+    "#0f766e",
+    "#b45309",
+    "#15803d",
+    "#7c3aed",
+    "#0369a1",
+    "#be123c",
+    "#166534",
+    "#854d0e",
+    "#047857",
+    "#4338ca",
+    "#65a30d",
+    "#c2410c",
+    "#0e7490",
+    "#a21caf",
+    "#1d4ed8",
+    "#b45309",
+    "#115e59",
+    "#9f1239",
+]
+
+
 def fig_estatisticas_times(
     df: pd.DataFrame,
     times: list[str],
-    coluna: str,
+    colunas: list[str],
 ):
-    """Barras por time para uma estatística."""
+    """Barras agrupadas: times no eixo X; cor por série (estatística)."""
     import plotly.graph_objects as go
 
-    palette = [
-        "#14532d",
-        "#15803d",
-        "#ca8a04",
-        "#0f766e",
-        "#b45309",
-        "#166534",
-        "#047857",
-        "#854d0e",
-    ]
     sub = df[df["Time"].isin(times)].copy()
-    if sub.empty or coluna not in sub.columns:
+    colunas = [c for c in colunas if c in sub.columns]
+    if sub.empty or not colunas:
         fig = go.Figure()
         fig.update_layout(
             title="Selecione times e estatísticas",
@@ -3149,22 +3164,29 @@ def fig_estatisticas_times(
     sub = sub.set_index("Time").loc[ordem]
 
     fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            name=coluna,
-            x=sub.index.tolist(),
-            y=sub[coluna].tolist(),
-            marker_color=palette[0],
-            hovertemplate="%{x}<br>" + coluna + ": %{y}<extra></extra>",
+    for i, col in enumerate(colunas):
+        fig.add_trace(
+            go.Bar(
+                name=col,
+                x=sub.index.tolist(),
+                y=sub[col].tolist(),
+                marker_color=_PALETA_SERIES[i % len(_PALETA_SERIES)],
+                hovertemplate="%{x}<br>" + col + ": %{y}<extra></extra>",
+            )
         )
-    )
 
+    titulo = (
+        f"Comparativo — {colunas[0]}"
+        if len(colunas) == 1
+        else "Comparativo de estatísticas"
+    )
     fig.update_layout(
-        title=f"Comparativo — {coluna}",
+        title=titulo,
         xaxis_title="Time",
-        yaxis_title=coluna,
+        yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
+        barmode="group",
         hovermode="x unified",
-        showlegend=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title_text="Série"),
         height=ALTURA_GRAFICO,
         margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
@@ -3242,23 +3264,14 @@ def _config_eixo_y_posicao(
 def fig_estatisticas_por_rodada(
     df: pd.DataFrame,
     times: list[str],
-    coluna: str,
+    colunas: list[str],
 ):
-    """Linhas por rodada para uma estatística (uma linha por time)."""
+    """Linhas por rodada no mesmo gráfico; cor por Time — Série."""
     import plotly.graph_objects as go
 
-    palette = [
-        "#14532d",
-        "#15803d",
-        "#ca8a04",
-        "#0f766e",
-        "#b45309",
-        "#166534",
-        "#047857",
-        "#854d0e",
-    ]
     sub = df[df["Time"].isin(times)].copy()
-    if sub.empty or coluna not in sub.columns:
+    colunas = [c for c in colunas if c in sub.columns]
+    if sub.empty or not colunas:
         fig = go.Figure()
         fig.update_layout(
             title="Selecione times e estatísticas",
@@ -3269,27 +3282,39 @@ def fig_estatisticas_por_rodada(
 
     ordem_times = [t for t in times if t in sub["Time"].unique()]
     fig = go.Figure()
-    for ti, time in enumerate(ordem_times):
+    k = 0
+    for time in ordem_times:
         s = sub[sub["Time"] == time].sort_values("Rodada")
-        fig.add_trace(
-            go.Scatter(
-                x=s["Rodada"],
-                y=s[coluna],
-                mode="lines+markers",
-                name=time,
-                line=dict(color=palette[ti % len(palette)], width=2.5),
-                marker=dict(size=5),
-                hovertemplate=(
-                    f"{time}<br>Rodada %{{x}}<br>{coluna}: %{{y}}<extra></extra>"
-                ),
+        for col in colunas:
+            nome = f"{time} — {col}"
+            fig.add_trace(
+                go.Scatter(
+                    x=s["Rodada"],
+                    y=s[col],
+                    mode="lines+markers",
+                    name=nome,
+                    line=dict(
+                        color=_PALETA_SERIES[k % len(_PALETA_SERIES)], width=2.5
+                    ),
+                    marker=dict(size=5),
+                    hovertemplate=(
+                        f"{nome}<br>Rodada %{{x}}<br>{col}: %{{y}}<extra></extra>"
+                    ),
+                )
             )
-        )
+            k += 1
+
+    titulo = (
+        f"Evolução rodada a rodada — {colunas[0]}"
+        if len(colunas) == 1
+        else "Evolução rodada a rodada"
+    )
     fig.update_layout(
-        title=f"Evolução rodada a rodada — {coluna}",
+        title=titulo,
         xaxis_title="Rodada",
-        yaxis_title=coluna,
+        yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title_text="Time — Série"),
         height=ALTURA_GRAFICO,
         margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
@@ -3303,6 +3328,13 @@ def fig_estatisticas_por_rodada(
         gridcolor="rgba(15, 23, 42, 0.08)",
         zeroline=False,
     )
-    _config_eixo_y_posicao(fig, coluna)
+    if len(colunas) == 1:
+        _config_eixo_y_posicao(fig, colunas[0])
+    else:
+        fig.update_yaxes(
+            showgrid=True,
+            gridcolor="rgba(15, 23, 42, 0.08)",
+            zeroline=False,
+        )
     return fig
 
