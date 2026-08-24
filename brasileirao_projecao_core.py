@@ -55,7 +55,7 @@ RODADA_CENTRO = 19  # centro do campeonato para Rodada Centrada
 DELTA_PTS_MAX_POR_RODADA = 3.0
 PESO_FORMA_RECENTE_H1 = 0.80  # próxima rodada
 PESO_FORMA_RECENTE_H5 = 0.50  # daqui a 5 rodadas
-PESO_FORMA_RECENTE_PISO = 0.25
+PESO_FORMA_RECENTE_PISO = 0.20
 
 _DIR_APP = Path(__file__).resolve().parent
 ARQUIVO_CALENDARIO = _DIR_APP / "dados" / "calendario_brasileirao_2026.xlsx"
@@ -711,7 +711,7 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_forca": False,
             "usa_rodada_centrada": False,
             "limita_delta_rodada": True,
-            "forma_decaindo": False,
+            "forma_decaindo": True,
         }
     if variante == "momento_historico":
         return {
@@ -724,7 +724,7 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_forca": True,
             "usa_rodada_centrada": False,
             "limita_delta_rodada": True,
-            "forma_decaindo": False,
+            "forma_decaindo": True,
         }
     if variante == "completa_limites":
         return {
@@ -749,14 +749,14 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
         "usa_forca": True,
         "usa_rodada_centrada": False,
         "limita_delta_rodada": True,
-        "forma_decaindo": False,
+        "forma_decaindo": True,
     }
 
 
 def peso_forma_recente_horizonte(horizonte: int) -> float:
     """
     Peso da forma recente na mistura com a forma geral.
-    Horizonte 1 (próxima rodada) → 80%; horizonte 5 → 50%; piso 25%.
+    Horizonte 1 (próxima rodada) → 80%; horizonte 5 → 50%; piso 20%.
     """
     h = max(1, int(horizonte))
     # Interpolação linear entre h=1 e h=5

@@ -215,7 +215,7 @@ _MODO_COMPLETA_LIMITES = (
     "Rodada Centrada ao Quadrado + Interação Rodada × Time + "
     "Interação Rodada Centrada ao Quadrado × Time + Forma Recente + "
     "Força dos Adversários Passados + Proporção Casa "
-    "(delta ≤ 3 pts/rodada; forma recente com peso decrescente)"
+    "(Rodada Centrada = Rodada − 19)"
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
 _MODO_MEDIA_CASA_FORA = "Média casa x fora"
@@ -266,7 +266,7 @@ with st.expander("Detalhes do modelo"):
                 f"(Rodada − {19}). Delta por rodada limitado a 3 pontos. "
                 "Forma = mistura de forma recente e forma geral, com peso da "
                 "recente caindo de 80% (próxima rodada) para 50% (daqui a 5) "
-                "até o piso de 25%. Significância: "
+                "até o piso de 20%. Significância: "
                 "*** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
             )
         else:
@@ -276,6 +276,8 @@ with st.expander("Detalhes do modelo"):
                 "(time de referência com interações nulas). "
                 "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal "
                 "(máximo 3 pontos por rodada). "
+                "Quando o modelo usa Forma Recente, o peso dela cai de 80% (próxima) "
+                "para 50% (daqui a 5) até o piso de 20%. "
                 "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
             )
         st.dataframe(
