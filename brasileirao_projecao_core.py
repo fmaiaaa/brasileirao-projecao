@@ -3020,13 +3020,12 @@ def fig_evolucao_times(
         xaxis_title="Rodada",
         yaxis_title="Pontos acumulados",
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         height=ALTURA_GRAFICO,
-        margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
+    _aplicar_layout_titulo_legenda(fig)
     _config_eixo_x_rodada(fig)
     fig.update_yaxes(
         showgrid=True,
@@ -3089,13 +3088,12 @@ def fig_evolucao_posicao_times(
         xaxis_title="Rodada",
         yaxis_title="Posição",
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         height=ALTURA_GRAFICO,
-        margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
+    _aplicar_layout_titulo_legenda(fig)
     _config_eixo_x_rodada(fig)
     _config_eixo_y_posicao(fig, "Posição")
     return fig
@@ -3175,13 +3173,12 @@ def fig_estatisticas_times(
         yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
         barmode="group",
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         height=ALTURA_GRAFICO,
-        margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
+    _aplicar_layout_titulo_legenda(fig)
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(
         showgrid=True,
@@ -3216,21 +3213,7 @@ _TICKS_EIXO_POSICAO = [1, 5, 10, 15, 20]
 
 
 def _config_eixo_x_rodada(fig, r_max: float = 38) -> None:
-    """Eixo X de rodada: no desktop, rótulo em todas as rodadas."""
-    r_max = max(1.0, float(r_max))
-    r_hi = min(38.0, r_max)
-    fig.update_xaxes(
-        dtick=1,
-        tick0=1,
-        range=[0.5, r_hi + 0.5],
-        showgrid=True,
-        gridcolor="rgba(15, 23, 42, 0.08)",
-        zeroline=False,
-    )
-
-
-def _config_eixo_x_rodada_mobile(fig, r_max: float = 38) -> None:
-    """Eixo X esparsado para mobile: 1, 9.5, 19, 28.5, 38."""
+    """Eixo X de rodada: 1, 9.5, 19, 28.5 e 38 (até r_max)."""
     r_max = max(1.0, float(r_max))
     ticks = [float(t) for t in TICKS_RODADA if float(t) <= r_max + 1e-9]
     fig.update_xaxes(
@@ -3243,6 +3226,52 @@ def _config_eixo_x_rodada_mobile(fig, r_max: float = 38) -> None:
         showgrid=True,
         gridcolor="rgba(15, 23, 42, 0.08)",
         zeroline=False,
+    )
+
+
+def _aplicar_layout_titulo_legenda(fig) -> None:
+    """Título no topo e legenda logo abaixo (evita sobreposição no mobile)."""
+    n = sum(
+        1
+        for t in fig.data
+        if getattr(t, "showlegend", True) is not False and getattr(t, "name", None)
+    )
+    n = max(n, 1)
+    fig_h = float(fig.layout.height or ALTURA_GRAFICO)
+    title_px = 38.0
+    gap = 12.0
+    rows = max(1, (n + 1) // 2)
+    legend_px = rows * 22.0 + 8.0
+    margin_t = int(max(80.0, title_px + legend_px + gap + 22.0))
+    legend_y = 1.0 - (title_px + gap) / fig_h
+
+    title_obj = fig.layout.title
+    title_text = None
+    if title_obj is not None:
+        title_text = (
+            title_obj if isinstance(title_obj, str) else getattr(title_obj, "text", None)
+        )
+    title_cfg: dict = {
+        "yref": "paper",
+        "y": 1,
+        "yanchor": "top",
+        "pad": dict(t=4, b=0),
+    }
+    if title_text:
+        title_cfg["text"] = title_text
+
+    fig.update_layout(
+        margin=dict(t=margin_t),
+        title=title_cfg,
+        legend=dict(
+            orientation="h",
+            yref="paper",
+            yanchor="top",
+            y=legend_y,
+            x=0,
+            xanchor="left",
+            tracegroupgap=2,
+        ),
     )
 
 
@@ -3348,13 +3377,12 @@ def fig_estatisticas_por_rodada(
         xaxis_title="Rodada",
         yaxis_title="Valor" if len(colunas) > 1 else colunas[0],
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         height=ALTURA_GRAFICO,
-        margin=dict(t=80),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
     )
+    _aplicar_layout_titulo_legenda(fig)
     _config_eixo_x_rodada(fig, r_eixo)
     if len(colunas) == 1:
         _config_eixo_y_posicao(fig, colunas[0])
