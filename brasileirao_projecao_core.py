@@ -3024,8 +3024,8 @@ def fig_evolucao_times(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
+        **_layout_legenda_desktop(),
     )
-    _aplicar_layout_titulo_legenda(fig)
     _config_eixo_x_rodada(fig)
     fig.update_yaxes(
         showgrid=True,
@@ -3092,8 +3092,8 @@ def fig_evolucao_posicao_times(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
+        **_layout_legenda_desktop(),
     )
-    _aplicar_layout_titulo_legenda(fig)
     _config_eixo_x_rodada(fig)
     _config_eixo_y_posicao(fig, "Posição")
     return fig
@@ -3177,8 +3177,8 @@ def fig_estatisticas_times(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
+        **_layout_legenda_desktop(),
     )
-    _aplicar_layout_titulo_legenda(fig)
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(
         showgrid=True,
@@ -3212,6 +3212,40 @@ def colunas_estatisticas_rodada_grafico(df: pd.DataFrame) -> list[str]:
 _TICKS_EIXO_POSICAO = [1, 5, 10, 15, 20]
 
 
+def _layout_legenda_desktop() -> dict:
+    """Legenda horizontal acima do gráfico (layout original no PC)."""
+    return {
+        "legend": dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        "margin": dict(t=80),
+    }
+
+
+def extrair_itens_legenda(fig) -> list[dict[str, str]]:
+    """Nome e cor das séries visíveis na legenda (para expander no mobile)."""
+    itens: list[dict[str, str]] = []
+    vistos: set[str] = set()
+    for trace in fig.data:
+        if getattr(trace, "showlegend", True) is False:
+            continue
+        nome = getattr(trace, "name", None)
+        if not nome or nome in vistos:
+            continue
+        vistos.add(str(nome))
+        cor = "#14532d"
+        linha = getattr(trace, "line", None)
+        marcador = getattr(trace, "marker", None)
+        if linha is not None and getattr(linha, "color", None):
+            cor = str(linha.color)
+        elif marcador is not None and getattr(marcador, "color", None):
+            c = marcador.color
+            if isinstance(c, str):
+                cor = c
+            elif isinstance(c, (list, tuple)) and c:
+                cor = str(c[0])
+        itens.append({"nome": str(nome), "cor": cor})
+    return itens
+
+
 def _config_eixo_x_rodada(fig, r_max: float = 38) -> None:
     """Eixo X de rodada: 1, 9.5, 19, 28.5 e 38 (até r_max)."""
     r_max = max(1.0, float(r_max))
@@ -3226,64 +3260,6 @@ def _config_eixo_x_rodada(fig, r_max: float = 38) -> None:
         showgrid=True,
         gridcolor="rgba(15, 23, 42, 0.08)",
         zeroline=False,
-    )
-
-
-def _aplicar_layout_titulo_legenda(fig) -> None:
-    """Ordem vertical: título → espaço → legenda → espaço → gráfico."""
-    n = sum(
-        1
-        for t in fig.data
-        if getattr(t, "showlegend", True) is not False and getattr(t, "name", None)
-    )
-    if n == 0:
-        fig.update_layout(margin=dict(t=60))
-        return
-
-    fig_h = float(fig.layout.height or ALTURA_GRAFICO)
-    title_px = 34.0
-    gap_title_legend = 10.0
-    gap_legend_plot = 14.0
-    row_px = 24.0
-    # Estimativa conservadora (~2 itens por linha no mobile)
-    rows = max(1, (n + 1) // 2)
-    legend_px = rows * row_px
-    margin_t = int(title_px + gap_title_legend + legend_px + gap_legend_plot)
-
-    title_obj = fig.layout.title
-    title_text = None
-    if title_obj is not None:
-        title_text = (
-            title_obj if isinstance(title_obj, str) else getattr(title_obj, "text", None)
-        )
-    title_cfg: dict = {
-        "yref": "paper",
-        "y": 1,
-        "yanchor": "top",
-        "x": 0,
-        "xanchor": "left",
-        "pad": dict(t=0, b=0),
-    }
-    if title_text:
-        title_cfg["text"] = title_text
-
-    # Borda inferior da legenda encosta no topo da área de plot (com gap_legend_plot)
-    plot_top = 1.0 - margin_t / fig_h
-    legend_y = plot_top + gap_legend_plot / fig_h
-
-    fig.update_layout(
-        margin=dict(t=margin_t),
-        title=title_cfg,
-        legend=dict(
-            orientation="h",
-            yref="paper",
-            yanchor="bottom",
-            y=legend_y,
-            x=0,
-            xanchor="left",
-            tracegroupgap=4,
-            itemsizing="constant",
-        ),
     )
 
 
@@ -3393,8 +3369,8 @@ def fig_estatisticas_por_rodada(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, sans-serif", color="#0f172a"),
+        **_layout_legenda_desktop(),
     )
-    _aplicar_layout_titulo_legenda(fig)
     _config_eixo_x_rodada(fig, r_eixo)
     if len(colunas) == 1:
         _config_eixo_y_posicao(fig, colunas[0])

@@ -325,6 +325,34 @@ def aplicar_estilo() -> None:
             font-size: 0.95rem;
         }}
 
+        /* Legendas dos gráficos: PC no Plotly; mobile em expander abaixo */
+        .grafico-legenda-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+            padding: 0.15rem 0 0.25rem 0;
+        }}
+        .grafico-legenda-item {{
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            font-size: 0.88rem;
+            color: {COR_TEXTO};
+            line-height: 1.35;
+        }}
+        .grafico-legenda-swatch {{
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+        }}
+        @media (min-width: 769px) {{
+            span.grafico-legenda-anchor ~ div[data-testid="stExpander"] {{
+                display: none !important;
+            }}
+        }}
+
         /* --- Mobile: responsivo sem alterar desktop --- */
         @media (max-width: 768px) {{
             [data-testid="stMain"] {{
@@ -380,6 +408,17 @@ def aplicar_estilo() -> None:
             [data-testid="stPlotlyChart"] {{
                 width: 100% !important;
                 overflow-x: hidden !important;
+                margin-bottom: 0.35rem !important;
+            }}
+            [data-testid="stPlotlyChart"] .legend,
+            [data-testid="stPlotlyChart"] g.legend,
+            [data-testid="stPlotlyChart"] .inlegend {{
+                display: none !important;
+                visibility: hidden !important;
+            }}
+            span.grafico-legenda-anchor ~ div[data-testid="stExpander"] {{
+                display: block !important;
+                margin-top: 0.65rem !important;
             }}
             [data-testid="stPlotlyChart"] > div,
             [data-testid="stPlotlyChart"] .js-plotly-plot,

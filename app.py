@@ -1,6 +1,8 @@
 """App Streamlit — Projeção Brasileirão 2026."""
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from brasileirao_estilo import (
@@ -27,6 +29,7 @@ from brasileirao_projecao_core import (
     fig_estatisticas_times,
     fig_evolucao_times,
     fig_evolucao_posicao_times,
+    extrair_itens_legenda,
     kpis_globais,
     mapa_posicao_pontos,
     probabilidades_cenarios_finais,
@@ -43,8 +46,27 @@ _PLOTLY_CONFIG = {
 }
 
 
+def _html_legenda_mobile(itens: list[dict[str, str]]) -> str:
+    linhas = []
+    for item in itens:
+        nome = html.escape(item["nome"])
+        cor = html.escape(item["cor"])
+        linhas.append(
+            f'<div class="grafico-legenda-item">'
+            f'<span class="grafico-legenda-swatch" style="background:{cor}"></span>'
+            f"<span>{nome}</span></div>"
+        )
+    return '<div class="grafico-legenda-list">' + "".join(linhas) + "</div>"
+
+
 def _grafico(fig) -> None:
     st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CONFIG)
+    itens = extrair_itens_legenda(fig)
+    if not itens:
+        return
+    st.markdown('<span class="grafico-legenda-anchor"></span>', unsafe_allow_html=True)
+    with st.expander("Legendas", expanded=False):
+        st.markdown(_html_legenda_mobile(itens), unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=120, show_spinner="Carregando planilha…")
