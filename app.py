@@ -46,6 +46,10 @@ from brasileirao_projecao_core import (
 
 _PLOTLY_CONFIG = {
     "displaylogo": False,
+    "scrollZoom": False,
+    "doubleClick": False,
+    "displayModeBar": False,
+    "staticPlot": False,
 }
 
 _DEFAULT_TIMES_GRAF = ("Palmeiras", "Flamengo", "Athletico-PR", "Cruzeiro")
@@ -165,7 +169,7 @@ with c_graf1:
     times_stats_graf = st.multiselect(
         "Times no gráfico",
         options=_times,
-        default=_default_times,
+        default=list(_times),
         key="stats_graf_times",
     )
 with c_graf2:
@@ -176,8 +180,32 @@ with c_graf2:
         key="stats_graf_metricas",
     )
 
+_ORD_MAIOR = "Ordenar do maior para o menor"
+_ORD_MENOR = "Ordenar do menor para o maior"
+_ORD_ALPHA = "Ordem alfabética"
+ordem_stats_label = st.radio(
+    "Ordenação do gráfico",
+    options=[_ORD_MAIOR, _ORD_MENOR, _ORD_ALPHA],
+    index=2,
+    horizontal=True,
+    key="stats_graf_ordem",
+)
+if ordem_stats_label == _ORD_MAIOR:
+    ordem_stats = "maior_menor"
+elif ordem_stats_label == _ORD_MENOR:
+    ordem_stats = "menor_maior"
+else:
+    ordem_stats = "alfabetica"
+
 if times_stats_graf and metricas_graf:
-    _grafico(fig_estatisticas_times(_df_stats, times_stats_graf, metricas_graf))
+    _grafico(
+        fig_estatisticas_times(
+            _df_stats,
+            times_stats_graf,
+            metricas_graf,
+            ordenacao=ordem_stats,
+        )
+    )
 else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 

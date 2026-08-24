@@ -457,18 +457,27 @@ def aplicar_estilo() -> None:
                 width: 100% !important;
                 max-width: 100% !important;
             }}
-            /* Sem zoom nos gráficos: só deslizar a página */
+            /* Sem interação nos gráficos no celular: só deslizar a página */
             [data-testid="stPlotlyChart"],
             [data-testid="stPlotlyChart"] .js-plotly-plot,
             [data-testid="stPlotlyChart"] .plot-container,
             [data-testid="stPlotlyChart"] .svg-container {{
-                touch-action: pan-x pan-y !important;
+                touch-action: pan-y !important;
+                user-select: none !important;
+                -webkit-user-select: none !important;
             }}
+            [data-testid="stPlotlyChart"] .js-plotly-plot,
+            [data-testid="stPlotlyChart"] .plot-container,
+            [data-testid="stPlotlyChart"] .svg-container,
+            [data-testid="stPlotlyChart"] .main-svg,
             .js-plotly-plot .nsewdrag,
             .js-plotly-plot .nsdrag,
             .js-plotly-plot .ewdrag,
             .js-plotly-plot .draglayer,
-            .js-plotly-plot .zoomlayer {{
+            .js-plotly-plot .zoomlayer,
+            .js-plotly-plot .hoverlayer,
+            .js-plotly-plot .cursor-crosshair,
+            .js-plotly-plot .plotly {{
                 pointer-events: none !important;
             }}
             .js-plotly-plot .modebar {{

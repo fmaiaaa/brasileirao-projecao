@@ -3193,6 +3193,8 @@ def fig_estatisticas_times(
     df: pd.DataFrame,
     times: list[str],
     colunas: list[str],
+    *,
+    ordenacao: str = "alfabetica",
 ):
     """Barras agrupadas: times no eixo X; cor por série (estatística)."""
     import plotly.graph_objects as go
@@ -3208,7 +3210,21 @@ def fig_estatisticas_times(
         )
         return fig
 
-    ordem = sorted(t for t in times if t in sub["Time"].values)
+    disponiveis = [t for t in times if t in sub["Time"].values]
+    chave = colunas[0]
+    if ordenacao == "maior_menor":
+        ordem = sorted(
+            disponiveis,
+            key=lambda t: float(sub.loc[sub["Time"] == t, chave].iloc[0]),
+            reverse=True,
+        )
+    elif ordenacao == "menor_maior":
+        ordem = sorted(
+            disponiveis,
+            key=lambda t: float(sub.loc[sub["Time"] == t, chave].iloc[0]),
+        )
+    else:
+        ordem = sorted(disponiveis)
     sub = sub.set_index("Time").loc[ordem]
 
     fig = go.Figure()
