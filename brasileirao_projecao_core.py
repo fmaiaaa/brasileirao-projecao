@@ -679,9 +679,9 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
     if variante == "completa_limites":
         return [
             "Intercepto",
-            "Rodada",
+            "Rodada Centrada",
             "Rodada Centrada ao Quadrado",
-            "Interação Rodada × Time",
+            "Interação Rodada Centrada × Time",
             "Interação Rodada Centrada ao Quadrado × Time",
             "Forma Recente",
             "Força dos Adversários Passados",
@@ -1172,8 +1172,13 @@ def ajustar_painel_efeitos_fixos(
     non_ref = times[1:]
     usa_centrada = flags.get("usa_rodada_centrada", False)
     r_c = r - float(RODADA_CENTRO)
+    r_lin = r_c if usa_centrada else r
     r2_arr = (r_c ** 2) if usa_centrada else (r ** 2)
+    nome_r = "Rodada Centrada" if usa_centrada else "Rodada"
     nome_r2 = "Rodada Centrada ao Quadrado" if usa_centrada else "Rodada ao Quadrado"
+    nome_int_r_base = (
+        "Interação Rodada Centrada" if usa_centrada else "Interação Rodada"
+    )
     nome_int_r2_base = (
         "Interação Rodada Centrada ao Quadrado"
         if usa_centrada
@@ -1190,8 +1195,8 @@ def ajustar_painel_efeitos_fixos(
         nomes.append(f"Efeito Fixo [{t}]")
 
     if flags["usa_rodada"]:
-        cols.append(r)
-        nomes.append("Rodada")
+        cols.append(r_lin)
+        nomes.append(nome_r)
     if flags["usa_rodada2"]:
         cols.append(r2_arr)
         nomes.append(nome_r2)
@@ -1199,8 +1204,8 @@ def ajustar_painel_efeitos_fixos(
     if usa_int_r:
         for t in non_ref:
             d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
-            cols.append(r * d)
-            nomes.append(f"Interação Rodada × [{t}]")
+            cols.append(r_lin * d)
+            nomes.append(f"{nome_int_r_base} × [{t}]")
     if usa_int_r2:
         for t in non_ref:
             d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
@@ -1228,8 +1233,8 @@ def ajustar_painel_efeitos_fixos(
             )
             nomes.append(f"Efeito Fixo [{t}]")
         if flags["usa_rodada"]:
-            cols.append(r)
-            nomes.append("Rodada")
+            cols.append(r_lin)
+            nomes.append(nome_r)
         if flags["usa_rodada2"]:
             cols.append(r2_arr)
             nomes.append(nome_r2)
@@ -1351,7 +1356,11 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
         if flags["usa_rodada"]:
             termos.append(
                 {
-                    "Variável": "Rodada",
+                    "Variável": (
+                        "Rodada Centrada"
+                        if flags.get("usa_rodada_centrada")
+                        else "Rodada"
+                    ),
                     "Beta": round(b1, 4),
                     "p-valor": comum.get("p_rodada"),
                 }
@@ -1371,7 +1380,11 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
         if flags.get("usa_interacao_rodada", True):
             termos.append(
                 {
-                    "Variável": "Interação Rodada × Time",
+                    "Variável": (
+                        "Interação Rodada Centrada × Time"
+                        if flags.get("usa_rodada_centrada")
+                        else "Interação Rodada × Time"
+                    ),
                     "Beta": round(g1, 4),
                     "p-valor": fe.get("p_gamma_rodada"),
                 }
@@ -1453,12 +1466,14 @@ def _prever_acumulado(
 ) -> float:
     r = float(rodada)
     if b.get("usa_rodada_centrada"):
-        r_quad = (r - float(RODADA_CENTRO)) ** 2
+        r_lin = r - float(RODADA_CENTRO)
+        r_quad = r_lin * r_lin
     else:
+        r_lin = r
         r_quad = r * r
     val = b["intercept"]
     if b.get("usa_rodada"):
-        val += b.get("beta_rodada", 0.0) * r
+        val += b.get("beta_rodada", 0.0) * r_lin
     if b.get("usa_rodada2"):
         val += b.get("beta_rodada2", 0.0) * r_quad
     if b.get("usa_forma"):

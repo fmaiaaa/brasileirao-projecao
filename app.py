@@ -201,8 +201,8 @@ _MODO_COMPLETA = (
 )
 _MODO_COMPLETA_CENTRADA = (
     "Regressão Completa (centrada) — "
-    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + "
-    "Rodada Centrada ao Quadrado + Interação Rodada × Time + "
+    "Pontos Acumulados ~ Efeito Fixo do Time + Rodada Centrada + "
+    "Rodada Centrada ao Quadrado + Interação Rodada Centrada × Time + "
     "Interação Rodada Centrada ao Quadrado × Time + Forma Recente + "
     "Força dos Adversários Passados + Proporção Casa "
     "(Rodada Centrada = Rodada − 19)"
@@ -239,7 +239,8 @@ else:
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
         extra_centrada = (
-            "Usa Rodada Centrada ao Quadrado (Rodada − 19). "
+            "Usa Rodada Centrada e Rodada Centrada ao Quadrado "
+            "(Rodada − 19). "
             if variante_acum == "completa_limites"
             else ""
         )
