@@ -16,7 +16,6 @@ ModoProjecao = Literal[
     "regressao_momento_aceleracao",
     "regressao_momento_historico",
     "regressao_completa",
-    "regressao_completa_limites",
 ]
 TipoRegressao = Literal["simples", "mandante_visitante"]
 VarianteRegressao = Literal[
