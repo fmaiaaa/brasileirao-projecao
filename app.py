@@ -7,6 +7,7 @@ import streamlit as st
 
 from brasileirao_estilo import (
     aplicar_estilo,
+    bloquear_graficos_mobile,
     bloco_classificacao_time,
     cabecalho_pagina,
     kpi_row,
@@ -49,11 +50,22 @@ _PLOTLY_CONFIG = {
     "scrollZoom": False,
     "doubleClick": False,
     "displayModeBar": False,
-    "staticPlot": False,
+    "editable": False,
+    "showTips": False,
 }
 
 _DEFAULT_TIMES_GRAF = ("Palmeiras", "Flamengo", "Athletico-PR", "Cruzeiro")
 _DEFAULT_METRICA_GRAF = "Média gols marcados/Média gols sofridos"
+
+
+def _bloquear_interacao_fig(fig) -> None:
+    """Desativa zoom/pan/seleção no Plotly (reforço; mobile também via CSS/JS)."""
+    fig.update_layout(
+        dragmode=False,
+        clickmode="none",
+    )
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
 
 
 def _html_legenda_mobile(itens: list[dict[str, str]]) -> str:
@@ -73,7 +85,9 @@ def _grafico(fig) -> None:
     titulo = titulo_fig(fig)
     if titulo:
         titulo_grafico(titulo)
+    _bloquear_interacao_fig(fig)
     st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CONFIG)
+    bloquear_graficos_mobile()
     itens = extrair_itens_legenda(fig)
     if not itens:
         return
@@ -93,6 +107,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 aplicar_estilo()
+bloquear_graficos_mobile()
 cabecalho_pagina("Projeção Brasileirão 2026")
 
 try:
@@ -407,7 +422,10 @@ if times_graf:
     mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
     mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
     probs_finais = probabilidades_cenarios_finais(jogos_proj)
-    times_graf_ord = sorted(times_graf)
+    times_graf_ord = sorted(
+        times_graf,
+        key=lambda t: mapa_final.get(t, (999, 0.0))[0],
+    )
 
     for time in times_graf_ord:
         pa, pta = mapa_atual.get(time, (0, 0))
@@ -426,12 +444,12 @@ if times_graf:
         )
 
     evolucoes = [
-        evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
+        evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf_ord
     ]
     _grafico(fig_evolucao_times(evolucoes))
 
     evolucoes_pos = [
-        evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf
+        evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf_ord
     ]
     _grafico(fig_evolucao_posicao_times(evolucoes_pos))
 else:

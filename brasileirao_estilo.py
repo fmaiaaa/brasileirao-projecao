@@ -458,27 +458,16 @@ def aplicar_estilo() -> None:
                 max-width: 100% !important;
             }}
             /* Sem interação nos gráficos no celular: só deslizar a página */
-            [data-testid="stPlotlyChart"],
-            [data-testid="stPlotlyChart"] .js-plotly-plot,
-            [data-testid="stPlotlyChart"] .plot-container,
-            [data-testid="stPlotlyChart"] .svg-container {{
+            [data-testid="stPlotlyChart"] {{
+                pointer-events: none !important;
                 touch-action: pan-y !important;
                 user-select: none !important;
                 -webkit-user-select: none !important;
+                -webkit-touch-callout: none !important;
             }}
-            [data-testid="stPlotlyChart"] .js-plotly-plot,
-            [data-testid="stPlotlyChart"] .plot-container,
-            [data-testid="stPlotlyChart"] .svg-container,
-            [data-testid="stPlotlyChart"] .main-svg,
-            .js-plotly-plot .nsewdrag,
-            .js-plotly-plot .nsdrag,
-            .js-plotly-plot .ewdrag,
-            .js-plotly-plot .draglayer,
-            .js-plotly-plot .zoomlayer,
-            .js-plotly-plot .hoverlayer,
-            .js-plotly-plot .cursor-crosshair,
-            .js-plotly-plot .plotly {{
+            [data-testid="stPlotlyChart"] * {{
                 pointer-events: none !important;
+                touch-action: pan-y !important;
             }}
             .js-plotly-plot .modebar {{
                 display: none !important;
@@ -503,6 +492,76 @@ def aplicar_estilo() -> None:
         </style>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def bloquear_graficos_mobile() -> None:
+    """Injeta JS (via components) que desliga interação Plotly no celular."""
+    import streamlit.components.v1 as components
+
+    components.html(
+        """
+        <script>
+        (function () {
+          const root = window.parent.document;
+          function isMobile() {
+            try {
+              return window.parent.matchMedia("(max-width: 768px)").matches
+                || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+            } catch (e) {
+              return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+            }
+          }
+          function lockOnce(gd) {
+            if (!gd || gd.__brLocked) return;
+            gd.__brLocked = true;
+            try {
+              if (window.parent.Plotly) {
+                window.parent.Plotly.relayout(gd, {
+                  dragmode: false,
+                  hovermode: false
+                });
+              }
+            } catch (e) {}
+            try {
+              // Remove handlers de drag/zoom
+              if (gd._context) {
+                gd._context.staticPlot = true;
+              }
+            } catch (e) {}
+          }
+          function lockAll() {
+            if (!isMobile()) return;
+            root.querySelectorAll("[data-testid='stPlotlyChart']").forEach(function (wrap) {
+              wrap.style.setProperty("pointer-events", "none", "important");
+              wrap.style.setProperty("touch-action", "pan-y", "important");
+              wrap.querySelectorAll("*").forEach(function (el) {
+                el.style.setProperty("pointer-events", "none", "important");
+                el.style.setProperty("touch-action", "pan-y", "important");
+              });
+            });
+            root.querySelectorAll(".js-plotly-plot").forEach(lockOnce);
+          }
+          lockAll();
+          if (!window.parent.__brPlotlyLockObs) {
+            window.parent.__brPlotlyLockObs = new MutationObserver(function () {
+              lockAll();
+            });
+            window.parent.__brPlotlyLockObs.observe(root.body, {
+              childList: true,
+              subtree: true
+            });
+            window.parent.addEventListener("resize", lockAll);
+            window.parent.addEventListener("orientationchange", lockAll);
+          }
+          setTimeout(lockAll, 200);
+          setTimeout(lockAll, 800);
+          setTimeout(lockAll, 1600);
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
     )
 
 
@@ -624,10 +683,10 @@ def bloco_classificacao_time(
         '<div class="vel-time-evolucao-block">'
         f'<p class="vel-kpi-time-label">{time}</p>'
         '<div class="vel-kpi-row vel-kpi-row--duo">'
-        '<div class="vel-kpi"><div class="lbl">Classificação Atual</div>'
-        f'<div class="val">{pos_atual}º · {_fmt_pts(pts_atual)} pts</div></div>'
         '<div class="vel-kpi"><div class="lbl">Classificação Final</div>'
         f'<div class="val">{pos_final}º · {_fmt_pts(pts_final)} pts</div></div>'
+        '<div class="vel-kpi"><div class="lbl">Classificação Atual</div>'
+        f'<div class="val">{pos_atual}º · {_fmt_pts(pts_atual)} pts</div></div>'
         "</div>"
     )
     if None not in (prob_campeao, prob_g4, prob_g6, prob_z4):
