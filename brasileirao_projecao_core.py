@@ -3230,20 +3230,25 @@ def _config_eixo_x_rodada(fig, r_max: float = 38) -> None:
 
 
 def _aplicar_layout_titulo_legenda(fig) -> None:
-    """Título no topo e legenda logo abaixo (evita sobreposição no mobile)."""
+    """Ordem vertical: título → espaço → legenda → espaço → gráfico."""
     n = sum(
         1
         for t in fig.data
         if getattr(t, "showlegend", True) is not False and getattr(t, "name", None)
     )
-    n = max(n, 1)
+    if n == 0:
+        fig.update_layout(margin=dict(t=60))
+        return
+
     fig_h = float(fig.layout.height or ALTURA_GRAFICO)
-    title_px = 38.0
-    gap = 12.0
+    title_px = 34.0
+    gap_title_legend = 10.0
+    gap_legend_plot = 14.0
+    row_px = 24.0
+    # Estimativa conservadora (~2 itens por linha no mobile)
     rows = max(1, (n + 1) // 2)
-    legend_px = rows * 22.0 + 8.0
-    margin_t = int(max(80.0, title_px + legend_px + gap + 22.0))
-    legend_y = 1.0 - (title_px + gap) / fig_h
+    legend_px = rows * row_px
+    margin_t = int(title_px + gap_title_legend + legend_px + gap_legend_plot)
 
     title_obj = fig.layout.title
     title_text = None
@@ -3255,10 +3260,16 @@ def _aplicar_layout_titulo_legenda(fig) -> None:
         "yref": "paper",
         "y": 1,
         "yanchor": "top",
-        "pad": dict(t=4, b=0),
+        "x": 0,
+        "xanchor": "left",
+        "pad": dict(t=0, b=0),
     }
     if title_text:
         title_cfg["text"] = title_text
+
+    # Borda inferior da legenda encosta no topo da área de plot (com gap_legend_plot)
+    plot_top = 1.0 - margin_t / fig_h
+    legend_y = plot_top + gap_legend_plot / fig_h
 
     fig.update_layout(
         margin=dict(t=margin_t),
@@ -3266,11 +3277,12 @@ def _aplicar_layout_titulo_legenda(fig) -> None:
         legend=dict(
             orientation="h",
             yref="paper",
-            yanchor="top",
+            yanchor="bottom",
             y=legend_y,
             x=0,
             xanchor="left",
-            tracegroupgap=2,
+            tracegroupgap=4,
+            itemsizing="constant",
         ),
     )
 
