@@ -99,11 +99,14 @@ def fit_from_jogos(
     *,
     run_backtest: bool = True,
     cfg: dict[str, Any] | None = None,
+    progress=None,
 ) -> FittedBundle:
     """Treina somente quando chamado (modo selecionado no app)."""
     cfg = cfg or load_config()
     matches, report = load_matches_for_training(jogos, cfg)
-    bundle = train_pipeline(matches, cfg, run_backtest=run_backtest)
+    bundle = train_pipeline(
+        matches, cfg, run_backtest=run_backtest, progress=progress
+    )
     src = report.get("source") or report.get("fallback") or "mapped"
     bundle.status.notes.append(f"data_source={src}")
     if report.get("fingerprint"):

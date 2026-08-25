@@ -320,9 +320,9 @@ _MODO_PROB = (
 )
 
 _modo_opcoes = [
-    _MODO_REG,
-    _MODO_MEDIA,
     _MODO_TURNO,
+    _MODO_MEDIA,
+    _MODO_REG,
     _MODO_PROB,
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
@@ -344,8 +344,7 @@ elif modo_label == _MODO_TURNO:
 elif modo_label == _MODO_PROB:
     modo = "prob_ml"
 else:
-    modo = "regressao_completa"
-    variante_acum = "completa"
+    modo = "repetir_turno"
 
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
@@ -416,23 +415,36 @@ with st.expander("Detalhes do modelo"):
         _tabela(tabela_jogos_primeiro_turno(_jogos_base), key="tbl_turno")
 
 if modo == "prob_ml":
-    @st.cache_resource(show_spinner=False)
-    def _fit_prob_ml_cached(_sig: str, _n_jogados: int):
-        from prob_ml.integration import fit_from_jogos
-
-        return fit_from_jogos(_jogos_base, run_backtest=True)
+    from prob_ml.integration import (
+        aplicar_projecoes_probabilisticas,
+        fit_from_jogos,
+    )
 
     _sig = "|".join(
         f"{j.r}:{j.mand}:{j.vis}:{j.placar}" for j in _jogos_base
     )
-    _n_jogados = sum(1 for j in _jogos_base if j.jogado)
-    with st.spinner("Treinando/avaliando modelos probabilísticos (somente neste modo)…"):
-        from prob_ml.integration import aplicar_projecoes_probabilisticas
+    if (
+        st.session_state.get("prob_ml_sig") == _sig
+        and st.session_state.get("prob_ml_bundle") is not None
+    ):
+        _prob_bundle = st.session_state["prob_ml_bundle"]
+    else:
+        _prog = st.progress(0.0, text="Iniciando treino probabilístico…")
 
-        _prob_bundle = _fit_prob_ml_cached(_sig, _n_jogados)
-        jogos_proj, df_log, _prob_preds, _prob_sim_df = aplicar_projecoes_probabilisticas(
-            _jogos_base, _prob_bundle
+        def _on_progress(frac: float, msg: str) -> None:
+            _prog.progress(frac, text=msg)
+
+        _prob_bundle = fit_from_jogos(
+            _jogos_base, run_backtest=True, progress=_on_progress
         )
+        st.session_state["prob_ml_bundle"] = _prob_bundle
+        st.session_state["prob_ml_sig"] = _sig
+        _prog.progress(1.0, text="Treino concluído")
+        _prog.empty()
+
+    jogos_proj, df_log, _prob_preds, _prob_sim_df = aplicar_projecoes_probabilisticas(
+        _jogos_base, _prob_bundle
+    )
 else:
     jogos_proj, df_log = aplicar_projecoes(
         _jogos_base, modo, r_ini_proj, r_fim_proj, tipo

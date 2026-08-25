@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from prob_ml.backtesting import expanding_season_splits, nested_inner_splits
 from prob_ml.backtesting.metrics import aggregate_metrics, score_nll
@@ -25,6 +27,17 @@ from prob_ml.selection import select_features
 from prob_ml.simulation import SeasonSimResult, result_to_frame, simulate_season
 
 logger = logging.getLogger(__name__)
+
+ProgressCb = Callable[[float, str], None]
+
+
+def _emit(progress: ProgressCb | None, frac: float, msg: str) -> None:
+    if progress is None:
+        return
+    try:
+        progress(float(min(max(frac, 0.0), 1.0)), msg)
+    except Exception:
+        pass
 
 
 @dataclass
@@ -67,6 +80,7 @@ def train_pipeline(
     cfg: dict[str, Any] | None = None,
     *,
     run_backtest: bool = True,
+    progress: ProgressCb | None = None,
 ) -> FittedBundle:
     """
     Treina zoo + seleção + ensemble + calibração.
@@ -77,9 +91,11 @@ def train_pipeline(
     max_goals = int(cfg.get("goal_support", 8))
     status = ExperimentStatus(status="not_evaluated")
     status.notes.append("Pipeline iniciado")
+    _emit(progress, 0.02, "Preparando dados…")
 
     matches = matches.sort_values("date", kind="mergesort").reset_index(drop=True)
     matches, _ = update_elo(matches)
+    _emit(progress, 0.08, "Gerando features…")
     feats, registry = build_pre_match_features(
         matches,
         rolling_windows=cfg.get("features", {}).get("rolling_windows", [3, 5, 8]),
@@ -90,7 +106,7 @@ def train_pipeline(
     if len(played) < 15:
         status.notes.append("Poucos jogos com placar — champion não avaliado")
         models = build_model_zoo(max_goals, cfg.get("models_enabled"))
-        for m in models:
+        for m in tqdm(models, desc="Fit rápido", leave=False):
             m.fit(matches, feats)
         bundle = FittedBundle(
             models=models,
@@ -104,9 +120,10 @@ def train_pipeline(
             max_goals=max_goals,
         )
         _save_status(status, cfg)
+        _emit(progress, 1.0, "Concluído")
         return bundle
 
-    # Feature selection no histórico jogado (ainda assim, features são pré-jogo)
+    _emit(progress, 0.12, "Selecionando features…")
     sel, stab = select_features(
         feats.loc[played.index],
         matches.loc[played.index, "home_goals"],
@@ -118,15 +135,14 @@ def train_pipeline(
     models = build_model_zoo(max_goals, enabled)
     status.model_names = [m.name for m in models]
 
-    # HPO leve só em Dixon-Coles home_advantage / ElasticNet alpha (FAST)
     if cfg.get("hpo", {}).get("enabled", True) and run_backtest:
         n_trials = budget_hpo_trials(cfg)
+        _emit(progress, 0.18, f"HPO Dixon-Coles ({n_trials} trials)…")
 
         def obj(params: dict[str, Any]) -> float:
             from prob_ml.models import DixonColesModel
 
             m = DixonColesModel(max_goals=max_goals, home_advantage=params["ha"])
-            # fit em 70% temporal
             idx = played.index.to_numpy()
             cut = int(len(idx) * 0.7)
             tr, te = idx[:cut], idx[cut:]
@@ -150,11 +166,15 @@ def train_pipeline(
 
                 models[i] = DixonColesModel(max_goals=max_goals, home_advantage=best["ha"])
 
-    # Fit final
-    for m in models:
+    _emit(progress, 0.30, "Ajustando modelos finais…")
+    for mi, m in enumerate(tqdm(models, desc="Fit modelos", leave=False)):
         m.fit(matches, feats)
+        _emit(
+            progress,
+            0.30 + 0.15 * ((mi + 1) / max(len(models), 1)),
+            f"Fit: {m.name}",
+        )
 
-    # OOF temporal simples (expanding)
     splits = expanding_season_splits(matches) or []
     if not splits:
         from prob_ml.backtesting import date_expanding_splits
@@ -169,10 +189,9 @@ def train_pipeline(
     model_metrics: dict[str, dict[str, float]] = {}
 
     if run_backtest and splits:
-        # coleta OOF: para cada split, treina em train e prevê val
-        for sp in splits:
+        _emit(progress, 0.48, f"Backtest OOF ({len(splits)} folds)…")
+        for si, sp in enumerate(tqdm(splits, desc="Folds OOF", leave=False)):
             fitted = build_model_zoo(max_goals, enabled)
-            # aplica ha se HPO rodou
             for i, m in enumerate(fitted):
                 if m.name == "dixon_coles" and models[i].name == "dixon_coles":
                     m.home_advantage = getattr(models[i], "home_advantage", 0.25)
@@ -189,13 +208,16 @@ def train_pipeline(
                     d = m.predict_match(matches.loc[j], feats.loc[j])
                     oof_by_model[mi].append(d)
                     row_dists.append(d)
-                # para calibração usa blend igual temporário
                 blend = blend_distributions(row_dists)
                 ph, pd_, pa = blend.p_1x2()
                 oof_probs.append([ph, pd_, pa])
                 oof_y.append(0 if hg > ag else (1 if hg == ag else 2))
+            _emit(
+                progress,
+                0.48 + 0.35 * ((si + 1) / max(len(splits), 1)),
+                f"Fold OOF {si + 1}/{len(splits)}",
+            )
 
-        # métricas por modelo
         for mi, m in enumerate(models):
             if not oof_by_model[mi]:
                 continue
@@ -204,15 +226,14 @@ def train_pipeline(
             )
 
         if oof_hg:
+            _emit(progress, 0.88, "Ensemble + calibração…")
             method = "performance_weighted"
             w = optimize_blend_weights(
                 oof_by_model, np.array(oof_hg), np.array(oof_ag), method=method
             )
-            # calibração
             cal = fit_temperature(np.asarray(oof_probs), np.asarray(oof_y))
-            # métrica ensemble OOF
             ens_dists = []
-            for j in range(len(oof_hg)):
+            for j in tqdm(range(len(oof_hg)), desc="Métricas ensemble", leave=False):
                 d = blend_distributions(
                     [oof_by_model[m][j] for m in range(len(models))], w
                 )
@@ -255,12 +276,12 @@ def train_pipeline(
         selected_features=sel,
         max_goals=max_goals,
     )
-    # fix cal reference
     if run_backtest and splits and oof_hg:
         bundle.calibrator = cal
         bundle.weights = w
 
     _save_bundle_meta(bundle, cfg)
+    _emit(progress, 1.0, "Treino concluído")
     return bundle
 
 
