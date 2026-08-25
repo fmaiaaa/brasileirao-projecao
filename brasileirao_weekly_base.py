@@ -343,30 +343,28 @@ def enriquecer_stats_com_contexto(
         return df_stats
     if extra.empty or df_stats is None or df_stats.empty:
         return df_stats
-    # merge por nome aproximado
     from brasileirao_multi_liga import align_team_to_calendar
 
     cal = set(df_stats["Time"].astype(str))
     extra = extra.copy()
     extra["Time"] = extra["Time"].map(lambda t: align_team_to_calendar(str(t), cal))
-    return df_stats.merge(extra, on="Time", how="left")
-
-    leia = load_sheet(SHEET_LEIA_ME)
-    if leia is not None and not leia.empty and {"campo", "valor"} <= set(leia.columns):
-        by = {str(r["campo"]): str(r["valor"]) for _, r in leia.iterrows()}
-        gerado = by.get("gerado_em") or by.get("saved_at") or "—"
-        champ = by.get("champion", "—")
-        src = resolve_modelos_xlsx()
-        where = f" · {src.name}" if src else " · planilha Sheets"
-        return f"Base modelos de {gerado} · champion={champ}{where}"
-    path = resolve_modelos_xlsx()
-    if path is not None:
-        return (
-            "Base modelos (XLSX) de "
-            f"{datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds')} "
-            f"· {path}"
+    # evita linhas duplicadas (ex.: Flamengo + Flamengo RJ → mesmo Time)
+    num_cols = [
+        c
+        for c in extra.columns
+        if c != "Time" and pd.api.types.is_numeric_dtype(extra[c])
+    ]
+    if num_cols:
+        extra = (
+            extra.groupby("Time", as_index=False)[num_cols]
+            .mean(numeric_only=True)
         )
-    return "Base modelos ausente — coloque brasileirao_modelos.xlsx junto aos resultados."
+    else:
+        extra = extra.drop_duplicates(subset=["Time"], keep="first")
+
+    base = df_stats.drop_duplicates(subset=["Time"], keep="first")
+    merged = base.merge(extra, on="Time", how="left")
+    return merged.drop_duplicates(subset=["Time"], keep="first")
 
 
 def gap_fill_media_apenas_faltantes(

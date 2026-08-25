@@ -3457,7 +3457,17 @@ def fig_estatisticas_times(
     import plotly.graph_objects as go
 
     sub = df[df["Time"].isin(times)].copy()
+    # Plotly empilha barras com o mesmo X na mesma série → escala dobra se houver duplicata
+    sub = sub.drop_duplicates(subset=["Time"], keep="first")
     colunas = [c for c in colunas if c in sub.columns]
+    # remove métricas repetidas no multiselect
+    seen: set[str] = set()
+    colunas_uniq: list[str] = []
+    for c in colunas:
+        if c not in seen:
+            seen.add(c)
+            colunas_uniq.append(c)
+    colunas = colunas_uniq
     if sub.empty or not colunas:
         fig = go.Figure()
         fig.update_layout(
@@ -3467,7 +3477,7 @@ def fig_estatisticas_times(
         )
         return fig
 
-    disponiveis = [t for t in times if t in sub["Time"].values]
+    disponiveis = [t for t in times if t in set(sub["Time"].astype(str))]
     chave = colunas[0]
     if ordenacao == "maior_menor":
         ordem = sorted(
@@ -3483,6 +3493,9 @@ def fig_estatisticas_times(
     else:
         ordem = sorted(disponiveis)
     sub = sub.set_index("Time").loc[ordem]
+    # garante 1 linha por time após reindex
+    if sub.index.duplicated().any():
+        sub = sub[~sub.index.duplicated(keep="first")]
 
     fig = go.Figure()
     for i, col in enumerate(colunas):
