@@ -1,0 +1,54 @@
+# Mapeamento de nomes reais da base → canônicos.
+# Ajuste quando a base FPT/Drive chegar (schema inference + este arquivo).
+
+canonical:
+  match_id: [Match_ID, match_id, ID da partida, id]
+  country: [Country, Pais, País, country]
+  season: [Season, Temporada, season, Ano]
+  competition: [Div, League, Torneio, Liga, competition]
+  date: [Date, Data, date]
+  kickoff_time: [Time, Horario, Horário, kickoff_time]
+  round: [Round, Rodada, round]
+  home_team: [Home, Mandante, home_team, HomeTeam]
+  away_team: [Away, Visitante, away_team, AwayTeam]
+  home_goals: [Home_Score, Gols Mandante, home_goals, FTHG, HG]
+  away_goals: [Away_Score, Gols Visitante, away_goals, FTAG, AG]
+
+  odd_home_ft: [Odd_1_FT, odd_home_ft, B365H, PSCH]
+  odd_draw_ft: [Odd_X_FT, odd_draw_ft, B365D, PSCD]
+  odd_away_ft: [Odd_2_FT, odd_away_ft, B365A, PSCA]
+  odd_over_25: [Over_FT_2_5, odd_over_25]
+  odd_under_25: [Under_FT_2_5, odd_under_25]
+  odd_btts_yes: [BTTS_Yes, odd_btts_yes]
+  odd_btts_no: [BTTS_No, odd_btts_no]
+
+  home_xg: [xG_Home_FT, home_xg, xG_Home]
+  away_xg: [xG_Away_FT, away_xg, xG_Away]
+  home_xgot: [xGOT_Home_FT, home_xgot]
+  away_xgot: [xGOT_Away_FT, away_xgot]
+  home_shots: [Total_Shots_Home_FT, home_shots]
+  away_shots: [Total_Shots_Away_FT, away_shots]
+  home_sot: [Shots_On_Target_Home_FT, home_sot]
+  away_sot: [Shots_On_Target_Away_FT, away_sot]
+  home_corners: [Corners_Home_FT, home_corners]
+  away_corners: [Corners_Away_FT, away_corners]
+  home_possession: [Possession_Home_FT, home_possession]
+  away_possession: [Possession_Away_FT, away_possession]
+  home_big_chances: [Big_Chances_Home_FT, home_big_chances]
+  away_big_chances: [Big_Chances_Away_FT, away_big_chances]
+
+# Colunas pós-kickoff da MESMA partida — proibidas como features pré-jogo.
+leakage_forbidden_same_match:
+  - Odd_1_HT
+  - Odd_X_HT
+  - Odd_2_HT
+  - Over_HT_0_5
+  - Under_HT_0_5
+  - xG_Home_HT
+  - xG_Away_HT
+  - xG_Home_2T
+  - xG_Away_2T
+  - Total_Shots_Home_HT
+  - Total_Shots_Away_HT
+  - Min_Goals_Home
+  - Min_Goals_Away

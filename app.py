@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 
+import pandas as pd
 import streamlit as st
 
 from brasileirao_estilo import (
@@ -313,17 +314,25 @@ _MODO_REG = (
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
 _MODO_TURNO = "Repetir 1º turno"
+_MODO_PROB = (
+    "Probabilístico (placar) - ensemble temporal "
+    "(Poisson / Dixon-Coles / Elo / GLM / Elastic Net)"
+)
 
 _modo_opcoes = [
     _MODO_REG,
     _MODO_MEDIA,
     _MODO_TURNO,
+    _MODO_PROB,
 ]
 modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
 modo: ModoProjecao
 tipo: TipoRegressao = "mandante_visitante"
 variante_acum: VarianteRegressaoAcumulada = "completa"
+_prob_bundle = None
+_prob_preds: list = []
+_prob_sim_df = None
 
 if modo_label.startswith("Regressão"):
     modo = "regressao_completa"
@@ -332,6 +341,8 @@ elif modo_label == _MODO_MEDIA:
     modo = "media_simples"
 elif modo_label == _MODO_TURNO:
     modo = "repetir_turno"
+elif modo_label == _MODO_PROB:
+    modo = "prob_ml"
 else:
     modo = "regressao_completa"
     variante_acum = "completa"
@@ -373,6 +384,29 @@ with st.expander("Detalhes do modelo"):
             },
             key="tbl_media",
         )
+    elif modo == "prob_ml":
+        st.caption(
+            "Previsão probabilística de placar P(G_H, G_A) com features leakage-safe, "
+            "validação temporal, ensemble e calibração. "
+            "Treino só ocorre neste modo. Sem a base FPT/Drive, usa o calendário atual "
+            "(gols). Champion/métricas reais só após backtest com histórico multi-temporada."
+        )
+        from prob_ml.pipeline import load_status
+
+        _st_art = load_status()
+        st.write(
+            {
+                "status": _st_art.status,
+                "champion": _st_art.champion or "not_evaluated",
+                "ensemble": _st_art.ensemble_method or "not_evaluated",
+                "calibration": _st_art.calibration,
+                "fingerprint": _st_art.dataset_fingerprint or "—",
+            }
+        )
+        if _st_art.metrics:
+            st.json(_st_art.metrics)
+        else:
+            st.info("Métricas OOF: not_evaluated (aguarde o treino deste modo ou a base FPT).")
     else:
         st.caption(
             "Jogos do 1º turno usados como referência para espelhar a volta; "
@@ -381,12 +415,44 @@ with st.expander("Detalhes do modelo"):
         )
         _tabela(tabela_jogos_primeiro_turno(_jogos_base), key="tbl_turno")
 
-jogos_proj, df_log = aplicar_projecoes(
-    _jogos_base, modo, r_ini_proj, r_fim_proj, tipo
-)
+if modo == "prob_ml":
+    @st.cache_resource(show_spinner=False)
+    def _fit_prob_ml_cached(_sig: str, _n_jogados: int):
+        from prob_ml.integration import fit_from_jogos
+
+        return fit_from_jogos(_jogos_base, run_backtest=True)
+
+    _sig = "|".join(
+        f"{j.r}:{j.mand}:{j.vis}:{j.placar}" for j in _jogos_base
+    )
+    _n_jogados = sum(1 for j in _jogos_base if j.jogado)
+    with st.spinner("Treinando/avaliando modelos probabilísticos (somente neste modo)…"):
+        from prob_ml.integration import aplicar_projecoes_probabilisticas
+
+        _prob_bundle = _fit_prob_ml_cached(_sig, _n_jogados)
+        jogos_proj, df_log, _prob_preds, _prob_sim_df = aplicar_projecoes_probabilisticas(
+            _jogos_base, _prob_bundle
+        )
+else:
+    jogos_proj, df_log = aplicar_projecoes(
+        _jogos_base, modo, r_ini_proj, r_fim_proj, tipo
+    )
 
 titulo_secao("Classificação")
 _df_classif = tabela_comparativa_posicoes(_jogos_base, jogos_proj)
+if modo == "prob_ml" and _prob_sim_df is not None and not getattr(_prob_sim_df, "empty", True):
+    _mc = _prob_sim_df.set_index("Time")
+    for col_src, col_dst in (
+        ("Prob. Campeão", "Prob. Campeão"),
+        ("Prob. G4", "Prob. G4"),
+        ("Prob. G6", "Prob. G6"),
+        ("Prob. Z4", "Prob. Z4"),
+        ("Pts Esperados", "Pts Projetados"),
+    ):
+        if col_src in _mc.columns and col_dst in _df_classif.columns:
+            _df_classif[col_dst] = _df_classif["Time"].map(
+                lambda t, c=col_src: float(_mc.loc[t, c]) if t in _mc.index else None
+            )
 _tabela(
     _df_classif,
     column_config={
@@ -419,6 +485,34 @@ with st.expander("Jogos projetados"):
     else:
         _tabela(df_log, key="tbl_jogos_proj")
 
+if modo == "prob_ml" and _prob_preds:
+    with st.expander("Model Lab — previsões de placar", expanded=False):
+        st.caption(
+            "Derivado da matriz P(G_H, G_A). Importância ≠ causalidade. "
+            f"Status do experiment: {_prob_bundle.status.status if _prob_bundle else '—'}"
+        )
+        _lab = []
+        for p in _prob_preds[:40]:
+            tops = ", ".join(f"{i}-{j} ({pr:.0%})" for i, j, pr in p["top_scores"][:3])
+            _lab.append(
+                {
+                    "Rodada": p.get("round"),
+                    "Jogo": f"{p['home_team']} x {p['away_team']}",
+                    "λ H": round(p["xg_home"], 2),
+                    "λ A": round(p["xg_away"], 2),
+                    "P(H)": round(100 * p["p_home"], 1),
+                    "P(D)": round(100 * p["p_draw"], 1),
+                    "P(A)": round(100 * p["p_away"], 1),
+                    "O2.5": round(100 * p["over_25"], 1),
+                    "BTTS": round(100 * p["btts_yes"], 1),
+                    "Top placares": tops,
+                }
+            )
+        _tabela(pd.DataFrame(_lab), key="tbl_model_lab")
+        if _prob_sim_df is not None and not getattr(_prob_sim_df, "empty", True):
+            st.caption("Simulação Monte Carlo (amostra de placares, não só W/D/L)")
+            _tabela(_prob_sim_df, key="tbl_mc_prob")
+
 titulo_secao("Evolução por rodada")
 times_graf = st.multiselect(
     "Times para comparar",
@@ -429,7 +523,18 @@ times_graf = st.multiselect(
 if times_graf:
     mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
     mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
-    probs_finais = probabilidades_cenarios_finais(jogos_proj)
+    if modo == "prob_ml" and _prob_sim_df is not None and not _prob_sim_df.empty:
+        probs_finais = {
+            str(r["Time"]): {
+                "campeao": float(r["Prob. Campeão"]) / 100.0,
+                "g4": float(r["Prob. G4"]) / 100.0,
+                "g6": float(r["Prob. G6"]) / 100.0,
+                "z4": float(r["Prob. Z4"]) / 100.0,
+            }
+            for _, r in _prob_sim_df.iterrows()
+        }
+    else:
+        probs_finais = probabilidades_cenarios_finais(jogos_proj)
     times_graf_ord = sorted(
         times_graf,
         key=lambda t: mapa_final.get(t, (999, 0.0))[0],

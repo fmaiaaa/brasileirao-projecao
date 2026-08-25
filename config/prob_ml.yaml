@@ -1,0 +1,75 @@
+# Configuração do pipeline probabilístico (P0).
+# Champion/pesos/NLL só são preenchidos após backtest real — nunca inventados.
+
+compute_budget: fast  # fast | standard | full
+
+competition:
+  name: brasileirao_serie_a
+  seasons: [2021, 2022, 2023, 2024, 2025, 2026]
+  n_teams: 20
+  rounds: 38
+  tiebreakers: [points, wins, goal_diff, goals_for, head_to_head]
+  continental:
+    libertadores: [1, 2, 3, 4]  # G4
+    sulamericana: [5, 6]        # G6 complemento
+  relegation: [17, 18, 19, 20]   # Z4
+
+goal_support: 8
+tail_mass_floor: 1.0e-12
+
+data:
+  source: local  # local | google_drive
+  local_path: dados/fpt_matches.parquet
+  google_drive_file_id: ""
+  google_drive_file_url: ""
+  cache_dir: artifacts/prob_ml/cache
+  schema_map_path: config/schema_map.yaml
+
+features:
+  rolling_windows: [3, 5, 8, 10]
+  ewma_halflives: [3, 5, 10]
+  home_away_split: true
+  market_family: [pure, market_only, hybrid]
+
+models_enabled:
+  - league_mean
+  - elo_result
+  - independent_poisson
+  - dixon_coles
+  - poisson_glm
+  - elastic_net_goals
+
+backtesting:
+  outer_seasons_min_train: 2
+  inner_n_splits: 3
+  embargo_days: 0
+  primary_metric: score_nll
+
+hpo:
+  enabled: true
+  n_trials_fast: 8
+  n_trials_standard: 40
+  n_trials_full: 120
+  timeout_sec_fast: 30
+  seed: 42
+
+ensemble:
+  methods: [simple_average, performance_weighted, constrained_blend, elastic_net_stack]
+  min_models: 2
+
+calibration:
+  methods: [none, temperature, platt]
+
+monte_carlo:
+  n_sims_fast: 20000
+  n_sims_standard: 100000
+  n_sims_full: 500000
+  seed: 42
+  dynamic_strength: false
+
+champion:
+  min_delta_nll: 0.002
+  require_calibration_ok: true
+
+artifacts_dir: artifacts/prob_ml
+status: not_evaluated

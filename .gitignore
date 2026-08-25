@@ -8,3 +8,11 @@ venv/
 *.log
 .DS_Store
 Thumbs.db
+artifacts/prob_ml/cache/
+artifacts/prob_ml/*.json
+!artifacts/prob_ml/.gitkeep
+dados/fpt_matches.*
+*.parquet
+.pytest_cache/
+.coverage
+htmlcov/
