@@ -9,10 +9,17 @@ venv/
 .DS_Store
 Thumbs.db
 artifacts/prob_ml/cache/
-artifacts/prob_ml/*.json
-!artifacts/prob_ml/.gitkeep
+artifacts/prob_ml/*.joblib
+artifacts/prob_ml/weekly_retrain.log
+artifacts/prob_ml/status.json
+artifacts/prob_ml/champion_bundle.joblib
 dados/fpt_matches.*
+dados/fpt_cups.csv
+# XLSX local grande (fonte de verdade = Google Sheets)
+dados/brasileirao_modelos.xlsx
 *.parquet
 .pytest_cache/
 .coverage
 htmlcov/
+diresimulator*.json
+*-service-account*.json

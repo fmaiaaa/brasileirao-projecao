@@ -189,6 +189,8 @@ class PoissonGLMModel(ScoreModel):
             for c in features.columns
             if c.startswith(("home_gf_", "home_ga_", "away_gf_", "away_ga_", "home_pts_", "away_pts_", "elo_", "mkt_", "league_"))
             or c.endswith(("_roll3", "_roll5", "_roll8", "_ewm3", "_ewm5"))
+            or "rest_days" in c
+            or "_imp_" in c
         ]
         # prefer numeric
         out = []
@@ -268,6 +270,8 @@ class ElasticNetGoalsModel(ScoreModel):
                 or c.startswith("mkt_")
                 or c.startswith("elo_")
                 or c == "league_avg_goals_pre"
+                or "rest_days" in c
+                or "_imp_" in c
             )
         ]
         self.feature_cols = cols[:50]

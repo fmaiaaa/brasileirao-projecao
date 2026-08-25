@@ -5,7 +5,7 @@ canonical:
   match_id: [Match_ID, match_id, ID da partida, id]
   country: [Country, Pais, País, country]
   season: [Season, Temporada, season, Ano]
-  competition: [Div, League, Torneio, Liga, competition]
+  competition: [fpt_competition, competition, Div, League, Torneio, Liga]
   date: [Date, Data, date]
   kickoff_time: [Time, Horario, Horário, kickoff_time]
   round: [Round, Rodada, round]

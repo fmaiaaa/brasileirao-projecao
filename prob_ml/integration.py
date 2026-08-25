@@ -29,6 +29,9 @@ def load_matches_for_training(
     1. Google Drive (se source=google_drive ou se local falhar e houver file_id)
     2. Arquivo local (dados/fpt_matches.*)
     3. Fallback: calendário do app
+
+    Depois, se ``jogos`` (Sheets/xlsx) for passado, sobrescreve placares da
+    Série A atual — a planilha é mais rápida que a FPT (~1 rodada de atraso).
     """
     cfg = cfg or load_config()
     data_cfg = cfg.get("data", {})
@@ -38,6 +41,8 @@ def load_matches_for_training(
     file_url = (data_cfg.get("google_drive_file_url") or "").strip()
     source = str(data_cfg.get("source", "local")).lower()
     local_path = _ROOT / data_cfg.get("local_path", "dados/fpt_matches.csv")
+
+    matches: pd.DataFrame | None = None
 
     # Preferência Drive quando source=google_drive
     if source == "google_drive" and (file_id or file_url):
@@ -49,23 +54,19 @@ def load_matches_for_training(
             )
             matches, report = ds.load_canonical()
             report["ok"] = True
-            return matches, report
         except Exception as e:
             logger.warning("Drive indisponível (%s); tentando local", e)
             report["drive_error"] = f"{type(e).__name__}: {e}"
 
-    if local_path.exists():
+    if matches is None and local_path.exists():
         matches, report = LocalFileDataSource(local_path).load_canonical()
         report["ok"] = True
         report["fallback"] = "local_file"
-        # tenta Drive em background informativo
         if file_id or file_url:
             report["drive_configured"] = True
             report["drive_file_id"] = file_id or None
-        return matches, report
 
-    # tentativa Drive mesmo com source=local (se local ausente)
-    if file_id or file_url:
+    if matches is None and (file_id or file_url):
         try:
             ds = GoogleDriveDataSource(
                 file_id=file_id or None,
@@ -74,11 +75,10 @@ def load_matches_for_training(
             )
             matches, report = ds.load_canonical()
             report["ok"] = True
-            return matches, report
         except Exception as e:
             report["drive_error"] = f"{type(e).__name__}: {e}"
 
-    if jogos is not None:
+    if matches is None and jogos is not None:
         matches = matches_from_calendar_jogos(jogos)
         report = {
             "ok": True,
@@ -86,12 +86,20 @@ def load_matches_for_training(
             "n_rows": len(matches),
             "warning": "Base FPT ausente; usando calendário do app",
         }
-        return matches, report
 
-    raise FileNotFoundError(
-        "Nenhuma base disponível. Configure Drive (compartilhe com a SA) "
-        "ou coloque dados/fpt_matches.csv"
-    )
+    if matches is None:
+        raise FileNotFoundError(
+            "Nenhuma base disponível. Configure Drive (compartilhe com a SA) "
+            "ou coloque dados/fpt_matches.csv"
+        )
+
+    if jogos:
+        from prob_ml.calendar_overlay import overlay_fpt_with_calendar
+
+        matches, ov = overlay_fpt_with_calendar(matches, jogos)
+        report["calendar_overlay"] = ov
+
+    return matches, report
 
 
 def fit_from_jogos(
@@ -113,7 +121,119 @@ def fit_from_jogos(
         bundle.status.dataset_fingerprint = report["fingerprint"]
     if report.get("drive_error"):
         bundle.status.notes.append(f"drive_error={report['drive_error']}")
+    ov = report.get("calendar_overlay") or {}
+    if ov:
+        bundle.status.notes.append(
+            f"calendar_overlay updated={ov.get('n_updated')} "
+            f"inserted={ov.get('n_inserted')}"
+        )
     return bundle
+
+
+def aplicar_projecoes_de_csv(
+    jogos: list[Jogo],
+    calendar_csv: pd.DataFrame,
+) -> tuple[list[Jogo], pd.DataFrame]:
+    """Aplica xPts de CSV offline aos jogos pendentes do calendário."""
+    jogos = [Jogo(**j.__dict__) for j in jogos]
+    df = calendar_csv.copy()
+    # normaliza nomes de colunas
+    colmap = {c.lower().strip(): c for c in df.columns}
+    def col(*names: str) -> str | None:
+        for n in names:
+            if n.lower() in colmap:
+                return colmap[n.lower()]
+            if n in df.columns:
+                return n
+        return None
+
+    c_r = col("Rodada", "round")
+    c_m = col("Mandante", "home_team")
+    c_v = col("Visitante", "away_team")
+    c_proj = col("Proj")
+    c_xph = col("xpts_home")
+    c_xpv = col("xpts_away")
+    c_1x2 = col("1X2")
+    c_lam = col("λ", "lambda")
+
+    by_key: dict[tuple, dict] = {}
+    for _, row in df.iterrows():
+        try:
+            r = int(float(row[c_r])) if c_r else -1
+        except Exception:
+            r = -1
+        m = str(row[c_m]) if c_m else ""
+        v = str(row[c_v]) if c_v else ""
+        by_key[(m, v, r)] = row.to_dict()
+        by_key[(m, v, -1)] = row.to_dict()
+
+    log_rows = []
+    for j in jogos:
+        if j.jogado:
+            continue
+        row = by_key.get((j.mand, j.vis, j.r)) or by_key.get((j.mand, j.vis, -1))
+        if row is None:
+            continue
+        if c_xph and c_xpv and row.get(c_xph) is not None:
+            j.proj_pm = float(row[c_xph])
+            j.proj_pv = float(row[c_xpv])
+        elif c_proj and row.get(c_proj):
+            parts = str(row[c_proj]).replace(",", ".").split("/")
+            if len(parts) == 2:
+                j.proj_pm = float(parts[0].strip())
+                j.proj_pv = float(parts[1].strip())
+        j.origem = "prob_ml/offline_csv"
+        log_rows.append(
+            {
+                "Rodada": j.r,
+                "Mandante": j.mand,
+                "Visitante": j.vis,
+                "Proj": f"{(j.proj_pm or 0):.2f} / {(j.proj_pv or 0):.2f}",
+                "λ": row.get(c_lam, "") if c_lam else "",
+                "1X2": row.get(c_1x2, "") if c_1x2 else "",
+            }
+        )
+    return jogos, pd.DataFrame(log_rows)
+
+
+def refresh_standings_from_calendar(
+    jogos: list[Jogo],
+    bundle: FittedBundle,
+    *,
+    cfg: dict[str, Any] | None = None,
+) -> tuple[list[dict], Any]:
+    """
+    Recalcula previsões + Monte Carlo só com jogos ainda pendentes no calendário.
+    Use mid-week quando a Sheets ganha placares novos e o CSV semanal ficou velho.
+    """
+    from brasileirao_projecao_core import stats_acumuladas_ate, times_do_calendario
+    from prob_ml.config import budget_n_sims, load_config
+    from prob_ml.offline import forecast_calendar_games
+    from prob_ml.simulation import result_to_frame, simulate_season
+
+    cfg = cfg or load_config()
+    forecasts = forecast_calendar_games(bundle, jogos)
+    teams = times_do_calendario(jogos)
+    current = {t: {"points": 0.0, "wins": 0.0, "gd": 0.0, "gf": 0.0} for t in teams}
+    for t in teams:
+        st = stats_acumuladas_ate(jogos, t, 38, so_realizados=True)
+        current[t] = {
+            "points": float(st.pts),
+            "wins": float(st.vit),
+            "gd": float(st.sg),
+            "gf": float(st.gf),
+        }
+    fixtures = [
+        (p["home_team"], p["away_team"], p["dist"]) for p in forecasts if "dist" in p
+    ]
+    sim_df = None
+    if fixtures:
+        res = simulate_season(
+            teams, current, fixtures, n_sims=budget_n_sims(cfg), seed=42
+        )
+        sim_df = result_to_frame(res)
+    preds = [{k: v for k, v in p.items() if k != "dist"} for p in forecasts]
+    return preds, sim_df
 
 
 def aplicar_projecoes_probabilisticas(

@@ -20,6 +20,14 @@ tail_mass_floor: 1.0e-12
 data:
   source: local  # após compartilhar com streamlit-bot@..., use: google_drive
   local_path: dados/fpt_matches.csv
+  # Campeonatos FPT usados no treino de regressão e probabilístico.
+  # Médias e repetir 1º turno usam SOMENTE o calendário do Brasileirão.
+  fpt_leagues:
+    - {slug: brazil/serie-a-betano, competition: serie_a}
+    - {slug: brazil/serie-b, competition: serie_b}
+    - {slug: brazil/serie-c, competition: serie_c}
+    - {slug: brazil/serie-d, competition: serie_d}
+    - {slug: brazil/brasileiro-women, competition: brasileiro_women}
   google_drive_file_id: "12rP2nVmKF-VMyY1Oq47Oo7H34ADfxbTV"
   google_drive_file_url: "https://drive.google.com/file/d/12rP2nVmKF-VMyY1Oq47Oo7H34ADfxbTV/view?usp=sharing"
   cache_dir: artifacts/prob_ml/cache

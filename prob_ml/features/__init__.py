@@ -207,6 +207,33 @@ def build_pre_match_features(
         FeatureMeta("league_avg_goals_pre", "history", "goals", transformation="expanding_mean")
     )
 
+    try:
+        from prob_ml.context_calendar import attach_context_to_matches
+
+        out = attach_context_to_matches(out)
+        for n in (
+            "home_rest_days",
+            "away_rest_days",
+            "home_imp_classificatorias",
+            "away_imp_classificatorias",
+            "home_imp_oitavas",
+            "away_imp_oitavas",
+            "home_imp_quartas",
+            "away_imp_quartas",
+            "home_imp_semi",
+            "away_imp_semi",
+            "home_imp_final",
+            "away_imp_final",
+        ):
+            if n in out.columns:
+                registry.register(
+                    FeatureMeta(n, "calendar", "context", available_at="pre_kickoff")
+                )
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning("Contexto descanso/copas: %s", e)
+
     return out, registry
 
 

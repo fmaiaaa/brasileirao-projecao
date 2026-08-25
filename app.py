@@ -38,12 +38,26 @@ from brasileirao_projecao_core import (
     kpis_globais,
     mapa_posicao_pontos,
     probabilidades_cenarios_finais,
-    tabela_regressao_acumulada_resumo,
     tabela_medias_simples_times,
     tabela_jogos_primeiro_turno,
     tabela_comparativa_posicoes,
     tabela_estatisticas_times,
     times_do_calendario,
+)
+from brasileirao_weekly_base import (
+    anos_disponiveis_estatisticas,
+    aplicar_projecoes_csv_com_gap,
+    enriquecer_stats_com_contexto,
+    jogos_serie_a_ano,
+    load_prob_forecasts,
+    load_prob_metricas,
+    load_prob_projecoes,
+    load_prob_standings,
+    load_regressao_calendar,
+    load_regressao_coefs,
+    modelos_ready,
+    regressao_ready,
+    weekly_meta_caption,
 )
 
 _PLOTLY_CONFIG = {
@@ -118,6 +132,13 @@ def _carregar_dados_cached() -> tuple[list, object | None]:
     return jogos, df
 
 
+@st.cache_data(ttl=600, show_spinner="Carregando temporada…")
+def _jogos_historicos_cached(ano: int) -> list:
+    return jogos_serie_a_ano(int(ano))
+
+
+_ANO_CALENDARIO = 2026
+
 st.set_page_config(
     page_title="Projeção Brasileirão 2026",
     layout="wide",
@@ -133,12 +154,39 @@ except (FileNotFoundError, ValueError) as e:
     st.error(str(e))
     st.stop()
 
-_times = times_do_calendario(_jogos_base)
-_jogados = sum(1 for j in _jogos_base if j.jogado)
-_pendentes = len(_jogos_base) - _jogados
-_ult_r = max(j.r for j in _jogos_base if j.jogado) if _jogados else 1
+_anos_stats = anos_disponiveis_estatisticas(ano_atual=_ANO_CALENDARIO)
+ano_stats = st.selectbox(
+    "Temporada (estatísticas)",
+    options=_anos_stats,
+    index=0,
+    help=(
+        "2026 usa a planilha de resultados. "
+        "Anos anteriores usam a Série A da aba Base_Contexto (base semanal)."
+    ),
+    key="stats_ano",
+)
 
-_kpi = kpis_globais(_jogos_base)
+if int(ano_stats) == _ANO_CALENDARIO:
+    _jogos_stats = _jogos_base
+    _fonte_stats = "calendário / planilha de resultados"
+else:
+    _jogos_stats = _jogos_historicos_cached(int(ano_stats))
+    _fonte_stats = f"Base_Contexto · Série A {ano_stats}"
+    if not _jogos_stats:
+        st.warning(
+            f"Sem jogos da Série A {ano_stats} na Base_Contexto. "
+            "Atualize a base semanal (segunda 03:00)."
+        )
+
+_times = times_do_calendario(_jogos_stats)
+_jogados = sum(1 for j in _jogos_stats if j.jogado)
+_pendentes = len(_jogos_stats) - _jogados
+_ult_r = max((j.r for j in _jogos_stats if j.jogado), default=1)
+_r_max_stats = max((j.r for j in _jogos_stats), default=38)
+
+_kpi = kpis_globais(_jogos_stats)
+
+st.caption(f"Estatísticas: temporada **{ano_stats}** ({_fonte_stats})")
 
 kpi_row([
     ("Jogos realizados", str(_jogados), False),
@@ -162,7 +210,7 @@ with c_stats1:
     r_ini_stats = st.number_input(
         "Rodada início (estatísticas)",
         min_value=1,
-        max_value=38,
+        max_value=int(max(1, _r_max_stats)),
         value=1,
         step=1,
         key="stats_r_ini",
@@ -171,8 +219,8 @@ with c_stats2:
     r_fim_stats = st.number_input(
         "Rodada fim (estatísticas)",
         min_value=1,
-        max_value=38,
-        value=int(min(_ult_r, 38)),
+        max_value=int(max(1, _r_max_stats)),
+        value=int(min(_ult_r, _r_max_stats)),
         step=1,
         key="stats_r_fim",
     )
@@ -180,7 +228,8 @@ if r_fim_stats < r_ini_stats:
     st.warning("Rodada fim (estatísticas) menor que início - usando fim = início.")
     r_fim_stats = r_ini_stats
 
-_df_stats = tabela_estatisticas_times(_jogos_base, int(r_ini_stats), int(r_fim_stats))
+_df_stats = tabela_estatisticas_times(_jogos_stats, int(r_ini_stats), int(r_fim_stats))
+_df_stats = enriquecer_stats_com_contexto(_df_stats, int(ano_stats))
 
 _tabela(
     _df_stats,
@@ -242,7 +291,7 @@ else:
 
 _r_fim_rodada = int(min(int(r_fim_stats), int(_ult_r)))
 _df_stats_rodada = estatisticas_por_rodada(
-    _jogos_base, int(r_ini_stats), _r_fim_rodada
+    _jogos_stats, int(r_ini_stats), _r_fim_rodada
 )
 
 titulo_secao("Gráfico de estatísticas por rodada")
@@ -256,7 +305,7 @@ with c_graf_r1:
     times_rodada_graf = st.multiselect(
         "Times no gráfico",
         options=_times,
-        default=_default_times,
+        default=_default_times if _default_times else list(_times)[:4],
         key="stats_rodada_times",
     )
 with c_graf_r2:
@@ -267,16 +316,21 @@ with c_graf_r2:
         key="stats_rodada_metricas",
     )
 
-incluir_projecao_rodada = st.toggle(
-    "Incluir projeções no gráfico",
-    value=False,
-    key="stats_rodada_projecao",
-)
+_ano_atual_stats = int(ano_stats) == _ANO_CALENDARIO
+incluir_projecao_rodada = False
+if _ano_atual_stats:
+    incluir_projecao_rodada = st.toggle(
+        "Incluir projeções no gráfico",
+        value=False,
+        key="stats_rodada_projecao",
+    )
+else:
+    st.caption("Projeções no gráfico só na temporada atual (calendário).")
 
 if times_rodada_graf and metricas_rodada_graf:
     if incluir_projecao_rodada:
         _df_graf_rodada = projetar_estatisticas_por_rodada(
-            _jogos_base,
+            _jogos_stats,
             _df_stats_rodada,
             int(r_ini_stats),
             _r_fim_rodada,
@@ -296,15 +350,60 @@ else:
     st.info("Selecione ao menos um time e uma estatística para exibir o gráfico.")
 
 with st.expander("Dados carregados"):
-    if _df_fonte is not None:
+    if int(ano_stats) == _ANO_CALENDARIO and _df_fonte is not None:
         _tabela(_df_fonte, key="tbl_fonte")
+    elif _jogos_stats:
+        _tabela(
+            pd.DataFrame(
+                [
+                    {
+                        "Rodada": j.r,
+                        "Data": j.data,
+                        "Mandante": j.mand,
+                        "Placar": j.placar,
+                        "Visitante": j.vis,
+                    }
+                    for j in _jogos_stats
+                ]
+            ),
+            key="tbl_fonte_hist",
+        )
     else:
         st.info("Sem preview tabular.")
 
+# Ranking projetado ano a ano (pré-computado, sem leakage) — só leitura
+_rk_ano = None
+try:
+    from brasileirao_weekly_base import load_sheet as _load_sheet_rk
+
+    _rk_ano = _load_sheet_rk(str(int(ano_stats)))
+except Exception:
+    _rk_ano = None
+if _rk_ano is not None and not _rk_ano.empty:
+    with st.expander(
+        f"Ranking projetado {ano_stats} (Rodada 19→38, sem leakage)",
+        expanded=False,
+    ):
+        st.caption(
+            "Ranking Final = real ao fim. "
+            "Rodada N = posição final média estimada só com dados até a rodada N "
+            "(treino sem anos futuros nem 2º turno da temporada-alvo)."
+        )
+        _tabela(_rk_ano, key="tbl_ranking_ano")
+
+# Projeção sempre no calendário atual (ano do app)
+_times_proj = times_do_calendario(_jogos_base)
+_ult_r_proj = (
+    max(j.r for j in _jogos_base if j.jogado)
+    if any(j.jogado for j in _jogos_base)
+    else 1
+)
+
 titulo_secao("Configuração da projeção")
+st.caption(f"Projeções usam o calendário {_ANO_CALENDARIO} (planilha de resultados).")
 
 r_ini_proj = 1
-r_fim_proj = int(min(_ult_r, 38))
+r_fim_proj = int(min(_ult_r_proj, 38))
 
 _MODO_REG = (
     "Regressão - "
@@ -349,28 +448,31 @@ else:
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
         st.caption(
-            "Modelo de efeitos fixos (Efeito Fixo do Time) com Interação Rodada × Time "
-            "e Interação Rodada ao Quadrado × Time "
-            "(time de referência com interações nulas). "
-            "Curva de Pontos Acumulados por rodada; cada jogo recebe o delta decimal "
-            "(máximo 3 pontos por rodada). "
-            "O peso da Forma Recente cai de 80% (próxima) para 50% (daqui a 5) "
-            "até o piso de 20%, misturando com a forma geral. "
+            "Coeficientes da base semanal (job de segunda 03:00). "
+            "No meio da semana o app só aplica essa base + placares novos da planilha; "
+            "jogos sem linha na base semanal usam gap-fill de média (calendário). "
             "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
-        _tabela(
-            tabela_regressao_acumulada_resumo(
-                _jogos_base, r_ini_proj, r_fim_proj, variante_acum
-            ),
-            column_config={
-                "Time": st.column_config.TextColumn("Time", pinned="left"),
-                "R²": st.column_config.NumberColumn("R²", format="%.3f"),
-            },
-            key="tbl_reg",
-        )
+        st.caption(weekly_meta_caption())
+        _coefs = load_regressao_coefs()
+        if _coefs is not None and not _coefs.empty:
+            _tabela(
+                _coefs,
+                column_config={
+                    "Time": st.column_config.TextColumn("Time", pinned="left"),
+                    "R²": st.column_config.NumberColumn("R²", format="%.3f"),
+                },
+                key="tbl_reg",
+            )
+        else:
+            st.warning(
+                "Coeficientes da regressão ausentes. "
+                "Rode `python scripts/weekly_retrain.py` (ou aguarde a segunda 03:00)."
+            )
     elif modo == "media_simples":
         st.caption(
-            "Projeção = média pts/jogo em casa ou fora × fator de forma. "
+            "Projeção = média pts/jogo em casa ou fora × fator de forma "
+            "(somente jogos deste Brasileirão / calendário atual). "
             "O fator mistura forma recente e forma geral: peso da recente cai de "
             "80% (próxima rodada) para 50% (daqui a 5) até o piso de 20%."
         )
@@ -385,67 +487,100 @@ with st.expander("Detalhes do modelo"):
         )
     elif modo == "prob_ml":
         st.caption(
-            "Previsão probabilística de placar P(G_H, G_A) com features leakage-safe, "
-            "validação temporal, ensemble e calibração. "
-            "Treino só ocorre neste modo. Sem a base FPT/Drive, usa o calendário atual "
-            "(gols). Champion/métricas reais só após backtest com histórico multi-temporada."
+            "Previsões e Monte Carlo da base XLSX semanal "
+            "(arquivo brasileirao_modelos.xlsx / abas na planilha de resultados). "
+            "Placares novos na aba Jogos saem da projeção; "
+            "jogos sem linha na base usam gap-fill de média. "
+            "Sem download FPT e sem retreino no app."
         )
-        from prob_ml.pipeline import load_status
-
-        _st_art = load_status()
-        st.write(
-            {
-                "status": _st_art.status,
-                "champion": _st_art.champion or "not_evaluated",
-                "ensemble": _st_art.ensemble_method or "not_evaluated",
-                "calibration": _st_art.calibration,
-                "fingerprint": _st_art.dataset_fingerprint or "—",
-            }
-        )
-        if _st_art.metrics:
-            st.json(_st_art.metrics)
+        st.caption(weekly_meta_caption())
+        _met = load_prob_metricas()
+        if _met is not None and not _met.empty:
+            _tabela(_met, key="tbl_metricas_prob")
         else:
-            st.info("Métricas OOF: not_evaluated (aguarde o treino deste modo ou a base FPT).")
+            st.info("Métricas OOF: aguardando a base semanal (segunda 03:00).")
     else:
         st.caption(
-            "Jogos do 1º turno usados como referência para espelhar a volta; "
+            "Jogos do 1º turno deste Brasileirão usados como referência para espelhar a volta "
+            "(não usa outros campeonatos); "
             "sem par já disputado, usa média casa/fora × forma recente "
             "(com o mesmo decaimento de peso da forma)."
         )
         _tabela(tabela_jogos_primeiro_turno(_jogos_base), key="tbl_turno")
 
 if modo == "prob_ml":
-    from prob_ml.integration import (
-        aplicar_projecoes_probabilisticas,
-        fit_from_jogos,
-    )
-
-    _sig = "|".join(
-        f"{j.r}:{j.mand}:{j.vis}:{j.placar}" for j in _jogos_base
-    )
-    if (
-        st.session_state.get("prob_ml_sig") == _sig
-        and st.session_state.get("prob_ml_bundle") is not None
-    ):
-        _prob_bundle = st.session_state["prob_ml_bundle"]
-    else:
-        _prog = st.progress(0.0, text="Iniciando treino probabilístico…")
-
-        def _on_progress(frac: float, msg: str) -> None:
-            _prog.progress(frac, text=msg)
-
-        _prob_bundle = fit_from_jogos(
-            _jogos_base, run_backtest=True, progress=_on_progress
+    if not modelos_ready():
+        st.error(
+            "Base de modelos ausente. Coloque `brasileirao_modelos.xlsx` "
+            "junto à base de resultados (ex.: pasta dados/) ou cole as abas "
+            "na planilha Google Sheets. O app não treina ao vivo."
         )
-        st.session_state["prob_ml_bundle"] = _prob_bundle
-        st.session_state["prob_ml_sig"] = _sig
-        _prog.progress(1.0, text="Treino concluído")
-        _prog.empty()
+        st.stop()
 
-    jogos_proj, df_log, _prob_preds, _prob_sim_df = aplicar_projecoes_probabilisticas(
-        _jogos_base, _prob_bundle
+    st.caption(weekly_meta_caption())
+    _cal = load_prob_projecoes()
+    _stand = load_prob_standings()
+    _fc = load_prob_forecasts()
+
+    jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+        _jogos_base,
+        _cal if _cal is not None and not _cal.empty else _fc,
+        r_ini=r_ini_proj,
+        r_fim=r_fim_proj,
+        origem="prob_ml/xlsx",
+    )
+
+    if _stand is not None and not _stand.empty:
+        _prob_sim_df = _stand
+    if _fc is not None and not _fc.empty:
+        pend_pairs = {(j.mand, j.vis) for j in _jogos_base if not j.jogado}
+        _prob_preds = [
+            p
+            for p in _fc.to_dict(orient="records")
+            if (
+                str(p.get("home_team") or p.get("Mandante") or ""),
+                str(p.get("away_team") or p.get("Visitante") or ""),
+            )
+            in pend_pairs
+        ]
+
+    if _prob_preds:
+        for p in _prob_preds:
+            p.setdefault("xg_home", float(p.get("xg_home", 0) or 0))
+            p.setdefault("xg_away", float(p.get("xg_away", 0) or 0))
+            p.setdefault("p_home", float(p.get("p_home", 0) or 0))
+            p.setdefault("p_draw", float(p.get("p_draw", 0) or 0))
+            p.setdefault("p_away", float(p.get("p_away", 0) or 0))
+            p.setdefault("over_25", float(p.get("over_25", 0) or 0))
+            p.setdefault("btts_yes", float(p.get("btts_yes", 0) or 0))
+            tops = p.get("top_scores")
+            if isinstance(tops, str):
+                try:
+                    import json as _json
+
+                    p["top_scores"] = _json.loads(tops)
+                except Exception:
+                    p["top_scores"] = []
+            elif not tops:
+                p["top_scores"] = []
+
+elif modo_e_regressao_acumulada(modo):
+    if not regressao_ready():
+        st.error(
+            "Aba Projecoes_Regressao ausente. "
+            "Coloque `brasileirao_modelos.xlsx` junto aos resultados."
+        )
+        st.stop()
+    st.caption(weekly_meta_caption())
+    jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+        _jogos_base,
+        load_regressao_calendar(),
+        r_ini=r_ini_proj,
+        r_fim=r_fim_proj,
+        origem="regressao/xlsx",
     )
 else:
+    # Média e Repetir 1º turno: só planilha de resultados / calendário
     jogos_proj, df_log = aplicar_projecoes(
         _jogos_base, modo, r_ini_proj, r_fim_proj, tipo
     )
@@ -500,8 +635,7 @@ with st.expander("Jogos projetados"):
 if modo == "prob_ml" and _prob_preds:
     with st.expander("Model Lab — previsões de placar", expanded=False):
         st.caption(
-            "Derivado da matriz P(G_H, G_A). Importância ≠ causalidade. "
-            f"Status do experiment: {_prob_bundle.status.status if _prob_bundle else '—'}"
+            "Derivado da matriz P(G_H, G_A) — aba Match_Forecasts da base semanal."
         )
         _lab = []
         for p in _prob_preds[:40]:
@@ -528,8 +662,8 @@ if modo == "prob_ml" and _prob_preds:
 titulo_secao("Evolução por rodada")
 times_graf = st.multiselect(
     "Times para comparar",
-    options=_times,
-    default=[t for t in ("Palmeiras", "Flamengo", "Cruzeiro") if t in _times],
+    options=_times_proj,
+    default=[t for t in ("Palmeiras", "Flamengo", "Cruzeiro") if t in _times_proj],
 )
 
 if times_graf:
@@ -569,12 +703,14 @@ if times_graf:
         )
 
     evolucoes = [
-        evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf_ord
+        evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r_proj)
+        for t in times_graf_ord
     ]
     _grafico(fig_evolucao_times(evolucoes))
 
     evolucoes_pos = [
-        evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r) for t in times_graf_ord
+        evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r_proj)
+        for t in times_graf_ord
     ]
     _grafico(fig_evolucao_posicao_times(evolucoes_pos))
 else:

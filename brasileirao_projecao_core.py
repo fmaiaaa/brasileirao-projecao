@@ -169,20 +169,18 @@ def carregar_jogos_xlsx(caminho: Path | str | None = None) -> list[Jogo]:
 
 
 def carregar_jogos_gsheets() -> tuple[list[Jogo], pd.DataFrame, str]:
-    """Lê calendário da planilha Google (secrets [connections.gsheets])."""
+    """Lê calendário da planilha Google (secrets / .env service account)."""
     from brasileirao_gsheets import (
-        _secrets_connections_gsheets,
-        montar_service_account_info,
+        load_service_account_info,
         ler_planilha_gsheets,
         spreadsheet_id_brasileirao,
     )
 
-    raw = _secrets_connections_gsheets()
-    info = montar_service_account_info(raw)
+    info = load_service_account_info()
     if not info:
         raise ValueError(
-            "Credenciais [connections.gsheets] ausentes ou incompletas. "
-            "Use as mesmas secrets do velocímetro (private_key + client_email)."
+            "Credenciais Google ausentes. Defina GOOGLE_SERVICE_ACCOUNT_FILE no .env "
+            "ou [connections.gsheets] no Streamlit secrets."
         )
     sid = spreadsheet_id_brasileirao()
     df = ler_planilha_gsheets(info, sid)
@@ -687,6 +685,12 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
             "Forma Recente",
             "Força dos Adversários Passados",
             "Proporção Casa",
+            "Dias de Descanso",
+            "Classificatórias",
+            "Oitavas",
+            "Quartas",
+            "Semi",
+            "Final",
         ]
     return [
         "Intercepto",
@@ -697,6 +701,12 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
         "Forma Recente",
         "Força dos Adversários Passados",
         "Proporção Casa",
+        "Dias de Descanso",
+        "Classificatórias",
+        "Oitavas",
+        "Quartas",
+        "Semi",
+        "Final",
     ]
 
 
@@ -710,6 +720,8 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_forma": True,
             "usa_prop_casa": False,
             "usa_forca": False,
+            "usa_descanso": True,
+            "usa_importante": True,
             "usa_rodada_centrada": False,
             "limita_delta_rodada": True,
             "forma_decaindo": True,
@@ -723,6 +735,8 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_forma": False,
             "usa_prop_casa": True,
             "usa_forca": True,
+            "usa_descanso": True,
+            "usa_importante": True,
             "usa_rodada_centrada": False,
             "limita_delta_rodada": True,
             "forma_decaindo": True,
@@ -736,6 +750,8 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_forma": True,
             "usa_prop_casa": True,
             "usa_forca": True,
+            "usa_descanso": True,
+            "usa_importante": True,
             "usa_rodada_centrada": True,
             "limita_delta_rodada": True,
             "forma_decaindo": True,
@@ -748,6 +764,8 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
         "usa_forma": True,
         "usa_prop_casa": True,
         "usa_forca": True,
+        "usa_descanso": True,
+        "usa_importante": True,
         "usa_rodada_centrada": False,
         "limita_delta_rodada": True,
         "forma_decaindo": True,
@@ -1082,14 +1100,30 @@ def _coletar_painel_efeitos_fixos(
     forca_map: dict[str, float],
     *,
     metrica: str | None = None,
-) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Painel time×rodada: Y=PA (ou metrica) + R, PC, FAP, FR."""
+) -> tuple[
+    list[str],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list[str],
+]:
+    """Painel time×rodada: Y=PA + R, PC, FAP, FR, descanso, jogos importantes."""
+    try:
+        from prob_ml.context_calendar import context_for_team
+    except Exception:
+        context_for_team = None  # type: ignore
+
     times_obs: list[str] = []
     rodadas: list[float] = []
     y_vals: list[float] = []
     props: list[float] = []
     forcas: list[float] = []
     formas: list[float] = []
+    descansos: list[float] = []
+    importantes: list[str] = []
 
     for time in times_do_calendario(jogos):
         for r in range(r_ini, r_fim + 1):
@@ -1116,6 +1150,12 @@ def _coletar_painel_efeitos_fixos(
             props.append(_proporcao_casa(n_casa, n_fora))
             forcas.append(_forca_oponentes_passados(jogos, time, r + 1, forca_map))
             formas.append(forma_recente_ate(jogos, time, r, jogo_r.hora))
+            if context_for_team is not None:
+                d, imp = context_for_team(time, jogo_r.data)
+            else:
+                d, imp = 7.0, "Não tem"
+            descansos.append(float(d))
+            importantes.append(str(imp))
 
     return (
         times_obs,
@@ -1124,6 +1164,8 @@ def _coletar_painel_efeitos_fixos(
         np.array(props, dtype=float),
         np.array(forcas, dtype=float),
         np.array(formas, dtype=float),
+        np.array(descansos, dtype=float),
+        importantes,
     )
 
 
@@ -1135,6 +1177,7 @@ def ajustar_painel_efeitos_fixos(
     forca_map: dict[str, float] | None = None,
     *,
     metrica: str | None = None,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> dict:
     """
     Painel FE por variante:
@@ -1143,13 +1186,68 @@ def ajustar_painel_efeitos_fixos(
 
     Controles comuns seguem a variante.
     Identificação: time de referência com interações nulas.
+
+    ``blocos_extra``: outros campeonatos/temporadas (Série B/C/D, feminino, etc.).
+    Cada bloco tem força/forma calculadas internamente. Só entra no treino da
+    regressão — modos média e repetir 1º turno não usam isso.
     """
     flags = _flags_regressao_acumulada(variante)
     fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
-    times = times_do_calendario(jogos)
-    times_obs, r, y, prop, forca, forma = _coletar_painel_efeitos_fixos(
+    times_alvo = times_do_calendario(jogos)
+    cal_set = set(times_alvo)
+
+    times_obs, r, y, prop, forca, forma, descanso, importante = _coletar_painel_efeitos_fixos(
         jogos, r_ini, r_fim, fm, metrica=metrica
     )
+    times_obs_l = list(times_obs)
+    r_l = list(r.tolist()) if hasattr(r, "tolist") else list(r)
+    y_l = list(y.tolist()) if hasattr(y, "tolist") else list(y)
+    prop_l = list(prop.tolist()) if hasattr(prop, "tolist") else list(prop)
+    forca_l = list(forca.tolist()) if hasattr(forca, "tolist") else list(forca)
+    forma_l = list(forma.tolist()) if hasattr(forma, "tolist") else list(forma)
+    descanso_l = list(descanso.tolist()) if hasattr(descanso, "tolist") else list(descanso)
+    importante_l = list(importante)
+
+    if blocos_extra:
+        try:
+            from brasileirao_multi_liga import remap_block_teams
+        except Exception:
+            remap_block_teams = None  # type: ignore
+        for bloco in blocos_extra:
+            if not bloco:
+                continue
+            bloco_use = (
+                remap_block_teams(bloco, cal_set) if remap_block_teams else bloco
+            )
+            r0 = min(j.r for j in bloco_use)
+            r1 = max(j.r for j in bloco_use)
+            fm_b = mapa_forca_adversario(bloco_use, r0, r1)
+            t_b, r_b, y_b, p_b, f_b, fr_b, d_b, i_b = _coletar_painel_efeitos_fixos(
+                bloco_use, r0, r1, fm_b, metrica=metrica
+            )
+            times_obs_l.extend(t_b)
+            r_l.extend(r_b.tolist())
+            y_l.extend(y_b.tolist())
+            prop_l.extend(p_b.tolist())
+            forca_l.extend(f_b.tolist())
+            forma_l.extend(fr_b.tolist())
+            descanso_l.extend(d_b.tolist())
+            importante_l.extend(i_b)
+
+    times_obs = times_obs_l
+    r = np.array(r_l, dtype=float)
+    y = np.array(y_l, dtype=float)
+    prop = np.array(prop_l, dtype=float)
+    forca = np.array(forca_l, dtype=float)
+    forma = np.array(forma_l, dtype=float)
+    descanso = np.array(descanso_l, dtype=float)
+    importante = importante_l
+
+    # FE: times do calendário + quaisquer times extras que apareceram no painel
+    times = list(times_alvo)
+    for t in sorted(set(times_obs)):
+        if t not in cal_set:
+            times.append(t)
     n = len(y)
     vazio = {
         "times": times,
@@ -1163,11 +1261,23 @@ def ajustar_painel_efeitos_fixos(
             "beta_forma": 0.0,
             "beta_forca": 0.0,
             "beta_prop_casa": 0.0,
+            "beta_descanso": 0.0,
+            "beta_classificatorias": 0.0,
+            "beta_oitavas": 0.0,
+            "beta_quartas": 0.0,
+            "beta_semi": 0.0,
+            "beta_final": 0.0,
             "p_rodada": None,
             "p_rodada2": None,
             "p_forma": None,
             "p_forca": None,
             "p_prop_casa": None,
+            "p_descanso": None,
+            "p_classificatorias": None,
+            "p_oitavas": None,
+            "p_quartas": None,
+            "p_semi": None,
+            "p_final": None,
             **flags,
         },
         "por_time": {
@@ -1185,8 +1295,11 @@ def ajustar_painel_efeitos_fixos(
     if n == 0 or not times:
         return vazio
 
-    time_ref = times[0]
-    non_ref = times[1:]
+    time_ref = times_alvo[0] if times_alvo else times[0]
+    # Interações Rodada×Time só para o calendário-alvo; demais ligas
+    # contribuem via FE de nível + controles comuns (forma, força, prop. casa).
+    non_ref_inter = [t for t in times_alvo if t != time_ref]
+    non_ref = [t for t in times if t != time_ref]
     usa_centrada = flags.get("usa_rodada_centrada", False)
     r_c = r - float(RODADA_CENTRO)
     r_lin = r_c if usa_centrada else r
@@ -1219,12 +1332,12 @@ def ajustar_painel_efeitos_fixos(
         nomes.append(nome_r2)
 
     if usa_int_r:
-        for t in non_ref:
+        for t in non_ref_inter:
             d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
             cols.append(r_lin * d)
             nomes.append(f"{nome_int_r_base} × [{t}]")
     if usa_int_r2:
-        for t in non_ref:
+        for t in non_ref_inter:
             d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
             cols.append(r2_arr * d)
             nomes.append(f"{nome_int_r2_base} × [{t}]")
@@ -1238,6 +1351,15 @@ def ajustar_painel_efeitos_fixos(
     if flags["usa_prop_casa"]:
         cols.append(prop)
         nomes.append("Proporção Casa")
+    if flags.get("usa_descanso", True):
+        cols.append(descanso)
+        nomes.append("Dias de Descanso")
+    if flags.get("usa_importante", True):
+        for lab in ("Classificatórias", "Oitavas", "Quartas", "Semi", "Final"):
+            cols.append(
+                np.array([1.0 if x == lab else 0.0 for x in importante], dtype=float)
+            )
+            nomes.append(lab)
 
     X = np.column_stack(cols)
     # Se poucas obs, remove interações e tenta de novo
@@ -1264,8 +1386,20 @@ def ajustar_painel_efeitos_fixos(
         if flags["usa_prop_casa"]:
             cols.append(prop)
             nomes.append("Proporção Casa")
+        if flags.get("usa_descanso", True):
+            cols.append(descanso)
+            nomes.append("Dias de Descanso")
+        if flags.get("usa_importante", True):
+            for lab in ("Classificatórias", "Oitavas", "Quartas", "Semi", "Final"):
+                cols.append(
+                    np.array(
+                        [1.0 if x == lab else 0.0 for x in importante], dtype=float
+                    )
+                )
+                nomes.append(lab)
         X = np.column_stack(cols)
         non_ref = []
+        non_ref_inter = []
         usa_int_r = False
         usa_int_r2 = False
 
@@ -1288,8 +1422,10 @@ def ajustar_painel_efeitos_fixos(
         }
         idx += 1
 
-    b1 = b2 = b3 = b4 = b5 = 0.0
-    p_b1 = p_b2 = p_b3 = p_b4 = p_b5 = None
+    b1 = b2 = b3 = b4 = b5 = b6 = 0.0
+    p_b1 = p_b2 = p_b3 = p_b4 = p_b5 = p_b6 = None
+    b_imp = {k: 0.0 for k in ("classificatorias", "oitavas", "quartas", "semi", "final")}
+    p_imp = {k: None for k in b_imp}
 
     if flags["usa_rodada"]:
         b1 = float(coef[idx])
@@ -1301,14 +1437,14 @@ def ajustar_painel_efeitos_fixos(
         idx += 1
 
     if usa_int_r:
-        for t in non_ref:
+        for t in non_ref_inter:
             por_time[t]["gamma_rodada"] = float(coef[idx])
             por_time[t]["p_gamma_rodada"] = (
                 round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
             )
             idx += 1
     if usa_int_r2:
-        for t in non_ref:
+        for t in non_ref_inter:
             por_time[t]["gamma_rodada2"] = float(coef[idx])
             por_time[t]["p_gamma_rodada2"] = (
                 round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
@@ -1326,6 +1462,18 @@ def ajustar_painel_efeitos_fixos(
     if flags["usa_prop_casa"]:
         b5 = float(coef[idx])
         p_b5 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+        idx += 1
+    if flags.get("usa_descanso", True):
+        b6 = float(coef[idx])
+        p_b6 = round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+        idx += 1
+    if flags.get("usa_importante", True):
+        for key in ("classificatorias", "oitavas", "quartas", "semi", "final"):
+            b_imp[key] = float(coef[idx])
+            p_imp[key] = (
+                round(float(pvals[idx]), 4) if np.isfinite(pvals[idx]) else None
+            )
+            idx += 1
 
     return {
         "times": times,
@@ -1339,11 +1487,23 @@ def ajustar_painel_efeitos_fixos(
             "beta_forma": b3,
             "beta_forca": b4,
             "beta_prop_casa": b5,
+            "beta_descanso": b6,
+            "beta_classificatorias": b_imp["classificatorias"],
+            "beta_oitavas": b_imp["oitavas"],
+            "beta_quartas": b_imp["quartas"],
+            "beta_semi": b_imp["semi"],
+            "beta_final": b_imp["final"],
             "p_rodada": p_b1,
             "p_rodada2": p_b2,
             "p_forma": p_b3,
             "p_forca": p_b4,
             "p_prop_casa": p_b5,
+            "p_descanso": p_b6,
+            "p_classificatorias": p_imp["classificatorias"],
+            "p_oitavas": p_imp["oitavas"],
+            "p_quartas": p_imp["quartas"],
+            "p_semi": p_imp["semi"],
+            "p_final": p_imp["final"],
             **flags,
         },
         "por_time": por_time,
@@ -1442,6 +1602,29 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
                     "p-valor": comum.get("p_prop_casa"),
                 }
             )
+        if flags.get("usa_descanso", True):
+            termos.append(
+                {
+                    "Variável": "Dias de Descanso",
+                    "Beta": round(float(comum.get("beta_descanso", 0.0)), 4),
+                    "p-valor": comum.get("p_descanso"),
+                }
+            )
+        if flags.get("usa_importante", True):
+            for lab, key in (
+                ("Classificatórias", "classificatorias"),
+                ("Oitavas", "oitavas"),
+                ("Quartas", "quartas"),
+                ("Semi", "semi"),
+                ("Final", "final"),
+            ):
+                termos.append(
+                    {
+                        "Variável": lab,
+                        "Beta": round(float(comum.get(f"beta_{key}", 0.0)), 4),
+                        "p-valor": comum.get(f"p_{key}"),
+                    }
+                )
 
         usa_r2_proj = bool(
             flags.get("usa_rodada2") or flags.get("usa_interacao_rodada2")
@@ -1454,6 +1637,12 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
             "beta_forma": float(comum["beta_forma"]),
             "beta_forca": float(comum["beta_forca"]),
             "beta_prop_casa": float(comum["beta_prop_casa"]),
+            "beta_descanso": float(comum.get("beta_descanso", 0.0)),
+            "beta_classificatorias": float(comum.get("beta_classificatorias", 0.0)),
+            "beta_oitavas": float(comum.get("beta_oitavas", 0.0)),
+            "beta_quartas": float(comum.get("beta_quartas", 0.0)),
+            "beta_semi": float(comum.get("beta_semi", 0.0)),
+            "beta_final": float(comum.get("beta_final", 0.0)),
             "gamma_rodada": g1 if flags.get("usa_interacao_rodada", True) else 0.0,
             "gamma_rodada2": g2 if flags.get("usa_interacao_rodada2", True) else 0.0,
             "usa_rodada": True,
@@ -1461,6 +1650,8 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
             "usa_forma": flags["usa_forma"],
             "usa_forca": flags["usa_forca"],
             "usa_prop_casa": flags["usa_prop_casa"],
+            "usa_descanso": bool(flags.get("usa_descanso", True)),
+            "usa_importante": bool(flags.get("usa_importante", True)),
             "usa_rodada_centrada": bool(flags.get("usa_rodada_centrada")),
             "limita_delta_rodada": bool(flags.get("limita_delta_rodada")),
             "forma_decaindo": bool(flags.get("forma_decaindo")),
@@ -1480,6 +1671,8 @@ def _prever_acumulado(
     prop_casa: float = 1.0,
     forca_oponentes: float = 1.0,
     forma_recente: float = 1.0,
+    dias_descanso: float = 7.0,
+    importante: str = "Não tem",
 ) -> float:
     r = float(rodada)
     if b.get("usa_rodada_centrada"):
@@ -1499,6 +1692,19 @@ def _prever_acumulado(
         val += b.get("beta_forca", 0.0) * forca_oponentes
     if b.get("usa_prop_casa"):
         val += b.get("beta_prop_casa", 0.0) * prop_casa
+    if b.get("usa_descanso"):
+        val += b.get("beta_descanso", 0.0) * float(dias_descanso)
+    if b.get("usa_importante"):
+        mapa = {
+            "Classificatórias": "beta_classificatorias",
+            "Oitavas": "beta_oitavas",
+            "Quartas": "beta_quartas",
+            "Semi": "beta_semi",
+            "Final": "beta_final",
+        }
+        key = mapa.get(str(importante))
+        if key:
+            val += b.get(key, 0.0)
     return max(val, 0.0)
 
 
@@ -1527,7 +1733,7 @@ def _contexto_projecao_acumulada(
     time: str,
     jogo: Jogo,
     forca_map: dict[str, float],
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, str]:
     em_casa = jogo.mand == time
     prop = _proporcao_casa_ate(
         jogos, time, jogo.r, em_casa_jogo=em_casa, incluir_proj=True
@@ -1538,7 +1744,13 @@ def _contexto_projecao_acumulada(
     forma = forma_recente_ate(
         jogos, time, jogo.r, jogo.hora, incluir_proj=True
     )
-    return prop, forca, forma
+    try:
+        from prob_ml.context_calendar import context_for_team
+
+        descanso, importante = context_for_team(time, jogo.data)
+    except Exception:
+        descanso, importante = 7.0, "Não tem"
+    return prop, forca, forma, float(descanso), str(importante)
 
 
 def regressao_acumulada_beta(
@@ -1548,9 +1760,20 @@ def regressao_acumulada_beta(
     r_fim: int,
     variante: VarianteRegressaoAcumulada,
     forca_map: dict[str, float] | None = None,
+    *,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> dict:
     fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
-    painel = ajustar_painel_efeitos_fixos(jogos, r_ini, r_fim, variante, fm)
+    if blocos_extra is None:
+        try:
+            from brasileirao_multi_liga import carregar_blocos_treino_regressao
+
+            blocos_extra = carregar_blocos_treino_regressao()
+        except Exception:
+            blocos_extra = []
+    painel = ajustar_painel_efeitos_fixos(
+        jogos, r_ini, r_fim, variante, fm, blocos_extra=blocos_extra
+    )
     por_time = coeficientes_efeitos_fixos_por_time(painel)
     if time in por_time:
         return por_time[time]
@@ -1773,12 +1996,23 @@ def aplicar_projecoes_acumulada(
     r_ini: int,
     r_fim: int,
     variante: VarianteRegressaoAcumulada,
+    *,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> tuple[list[Jogo], pd.DataFrame]:
     """Projeta rodada a rodada; força dos oponentes atualizada após cada rodada."""
     jogos = [Jogo(**j.__dict__) for j in jogos]
     times = times_do_calendario(jogos)
     forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
-    painel = ajustar_painel_efeitos_fixos(jogos, r_ini, r_fim, variante, forca_map)
+    if blocos_extra is None:
+        try:
+            from brasileirao_multi_liga import carregar_blocos_treino_regressao
+
+            blocos_extra = carregar_blocos_treino_regressao()
+        except Exception:
+            blocos_extra = []
+    painel = ajustar_painel_efeitos_fixos(
+        jogos, r_ini, r_fim, variante, forca_map, blocos_extra=blocos_extra
+    )
     betas = coeficientes_efeitos_fixos_por_time(painel)
     acum_cache: dict[str, dict[int, float]] = {t: {0: 0.0} for t in times}
     for t in times:
@@ -1802,10 +2036,10 @@ def aplicar_projecoes_acumulada(
             prev_m = _acum_proj_ate(acum_cache, m, r - 1, jogos, r_fim)
             prev_v = _acum_proj_ate(acum_cache, v, r - 1, jogos, r_fim)
 
-            prop_m, forca_m, forma_m = _contexto_projecao_acumulada(
+            prop_m, forca_m, forma_m, desc_m, imp_m = _contexto_projecao_acumulada(
                 jogos, m, j, forca_map
             )
-            prop_v, forca_v, forma_v = _contexto_projecao_acumulada(
+            prop_v, forca_v, forma_v, desc_v, imp_v = _contexto_projecao_acumulada(
                 jogos, v, j, forca_map
             )
             if betas[m].get("forma_decaindo"):
@@ -1822,6 +2056,8 @@ def aplicar_projecoes_acumulada(
                 prop_casa=prop_m,
                 forca_oponentes=forca_m,
                 forma_recente=forma_m,
+                dias_descanso=desc_m,
+                importante=imp_m,
             )
             target_v = _prever_acumulado(
                 betas[v],
@@ -1829,6 +2065,8 @@ def aplicar_projecoes_acumulada(
                 prop_casa=prop_v,
                 forca_oponentes=forca_v,
                 forma_recente=forma_v,
+                dias_descanso=desc_v,
+                importante=imp_v,
             )
 
             delta_m = max(0.0, target_m - prev_m)
@@ -1848,6 +2086,8 @@ def aplicar_projecoes_acumulada(
                     "Mandante": j.mand,
                     "Visitante": j.vis,
                     "Proj": f"{delta_m:.2f} / {delta_v:.2f}",
+                    "Descanso M/V": f"{desc_m:.0f} / {desc_v:.0f}",
+                    "Importante M/V": f"{imp_m} / {imp_v}",
                 }
             )
 
@@ -2051,11 +2291,22 @@ def tabela_regressao_acumulada_resumo(
     r_ini: int,
     r_fim: int,
     variante: VarianteRegressaoAcumulada,
+    *,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> pd.DataFrame:
     """R² e significância dos termos da regressão FE de pts acumulados."""
     forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
     ordem = _ordem_variaveis_regressao_acumulada(variante)
-    painel = ajustar_painel_efeitos_fixos(jogos, r_ini, r_fim, variante, forca_map)
+    if blocos_extra is None:
+        try:
+            from brasileirao_multi_liga import carregar_blocos_treino_regressao
+
+            blocos_extra = carregar_blocos_treino_regressao()
+        except Exception:
+            blocos_extra = []
+    painel = ajustar_painel_efeitos_fixos(
+        jogos, r_ini, r_fim, variante, forca_map, blocos_extra=blocos_extra
+    )
     por_time = coeficientes_efeitos_fixos_por_time(painel)
     rows: list[dict] = []
     for t in times_do_calendario(jogos):
@@ -2204,6 +2455,11 @@ COLUNAS_ESTATISTICAS_GRAFICO = [
     "Total pontos visitante",
     "Média pontos mandante",
     "Média pontos visitante",
+    "Média dias de descanso",
+    "% jogos c/ importante à frente",
+    "Média xG marcados",
+    "Média xG sofridos",
+    "Média xG marcados/Média xG sofridos",
 ]
 
 
@@ -3347,10 +3603,17 @@ def projetar_estatisticas_por_rodada(
             else:
                 prev[(t, col)] = 0.0
 
+    # App runtime: só calendário/resultados (FPT multi-liga fica no job semanal).
     betas_por_col: dict[str, dict[str, dict]] = {}
     for col in colunas:
         painel = ajustar_painel_efeitos_fixos(
-            jogos, r_ini, r_fim_obs, variante, forca_map, metrica=col
+            jogos,
+            r_ini,
+            r_fim_obs,
+            variante,
+            forca_map,
+            metrica=col,
+            blocos_extra=[],
         )
         betas_por_col[col] = coeficientes_efeitos_fixos_por_time(painel)
 

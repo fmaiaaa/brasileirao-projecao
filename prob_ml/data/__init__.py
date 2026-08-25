@@ -128,7 +128,13 @@ def normalize_matches(df: pd.DataFrame) -> pd.DataFrame:
     out["home_goals"] = pd.to_numeric(out["home_goals"], errors="coerce")
     out["away_goals"] = pd.to_numeric(out["away_goals"], errors="coerce")
     if "round" in out.columns:
-        out["round"] = pd.to_numeric(out["round"], errors="coerce")
+        # Aceita "Round 38", "Rodada 10", ou número puro
+        extracted = (
+            out["round"]
+            .astype(str)
+            .str.extract(r"(\d+)", expand=False)
+        )
+        out["round"] = pd.to_numeric(extracted, errors="coerce")
     if "season" in out.columns:
         out["season"] = pd.to_numeric(out["season"], errors="coerce").astype("Int64")
     out = out.sort_values(["date", "home_team", "away_team"], kind="mergesort")

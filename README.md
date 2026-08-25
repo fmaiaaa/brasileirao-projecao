@@ -40,36 +40,84 @@ Quando o modo usa Forma Recente, o peso dela na projeção cai de **80%** (próx
 1. **Regressão** — efeitos fixos + rodada + forma + adversários + casa
 2. **Média casa x fora × forma recente** — com decaimento de peso da forma
 3. **Repetir 1º turno** — espelha ida/volta; fallback pela média × forma
-4. **Probabilístico (placar)** — novo pipeline `prob_ml` (só treina **quando este modo está selecionado**)
+4. **Probabilístico (placar)** — lê a base semanal em `artifacts/prob_ml/` (sem retreino no app)
 
 Desempate na classificação: vitórias → saldo de gols → gols marcados → confronto direto entre empatados.
 
-## Pipeline probabilístico (`prob_ml`)
+## Automação 100% (sem trocar base na mão)
 
-Arquitetura modular para previsão de **matriz de placar** \(P(G_H, G_A)\), ensemble temporal, calibração e Monte Carlo do campeonato.
+Fluxo desejado:
 
-```text
-Base (local | Google Drive)
-  → schema map + validação + fingerprint
-  → features leakage-safe (shift→rolling/EWMA)
-  → ratings (Elo)
-  → model zoo + HPO leve + OOF temporal
-  → ensemble + calibração
-  → score matrix → xPts / 1X2 / O/U / BTTS
-  → Monte Carlo (amostra placares)
-  → site (modo Probabilístico + Model Lab)
+1. Você só atualiza placares na aba **`Jogos`**
+2. Toda **segunda 03:00** o job treina e **publica sozinho** as abas de modelo na **mesma planilha**
+3. O Streamlit lê `Jogos` + abas de modelo — sem upload manual
+
+### Setup (uma vez)
+
+1. Baixe o JSON da **service account** (a mesma do Streamlit / `[connections.gsheets]`).
+2. Na planilha  
+   https://docs.google.com/spreadsheets/d/1QkOIvRa9YinnOveOK4BkX4h_ZtGYRg1ZLzIfokbQh5I/edit  
+   compartilhe com o `client_email` da SA como **Editor** (não só leitor).
+3. No `.env` do projeto (o agendador já aponta para o repo):
+
+```env
+GOOGLE_SERVICE_ACCOUNT_FILE=C:\Users\kaleb\caminho\service-account.json
 ```
 
-### Treino offline (não roda a cada request)
+4. (Opcional) Para também sobrescrever um XLSX no Drive:
+
+```env
+MODELOS_DRIVE_FILE_ID=id_do_arquivo_no_drive
+```
+
+   Compartilhe esse arquivo com a mesma SA como **Editor**.
+
+5. Teste:
 
 ```bash
-python scripts/train_pipeline.py --synthetic --budget fast
-# com base local:
-# configure config/prob_ml.yaml → data.local_path
-python scripts/train_pipeline.py --budget standard
+python scripts/weekly_retrain.py --budget fast --skip-download --no-backtest
 ```
 
-No Streamlit, o treino/avaliação só dispara ao selecionar o modo **Probabilístico**.
+No log deve aparecer `Sheets publicada: … abas`. Depois disso, não precisa mais copiar XLSX para o Drive manualmente.
+
+### Alternativa: pasta do Google Drive for Desktop
+
+Se preferir só arquivo local sincronizado: faça o job gravar `brasileirao_modelos.xlsx` dentro da pasta sincronizada do Drive. O app em Cloud, porém, continua dependendo das **abas na Sheets** (ou de baixar o XLSX) — por isso a publicação na planilha é o caminho recomendado.
+
+O Streamlit **não baixa FPT e não retreina**. Depende só de:
+
+1. **Planilha de resultados** — aba **`Jogos`** (Sheets ou `dados/calendario_brasileirao_2026.xlsx`)
+2. **Base de modelos** — arquivo **`brasileirao_modelos.xlsx`** (junto aos resultados) **ou** as mesmas abas coladas na planilha Sheets
+
+Arquivo gerado toda segunda 03:00 em `dados/brasileirao_modelos.xlsx` e `Downloads/brasileirao_modelos.xlsx`.
+
+### Abas do `brasileirao_modelos.xlsx` (não renomear)
+
+| Aba | Conteúdo |
+|-----|----------|
+| `Leia-me` | Meta (data, champion, fingerprint) |
+| `Projecoes_Regressao` | xPts da regressão por jogo |
+| `Coefs_Regressao` | Coeficientes / significância |
+| `Classif_Regressao` | Classificação projetada (regressão) |
+| `Projecoes_Prob` | xPts / λ / 1X2 (probabilístico) |
+| `Match_Forecasts` | Previsões detalhadas de placar |
+| `Classif_Prob_MC` | Classificação + probs Monte Carlo |
+| `Metricas_Prob` | Métricas OOF |
+| `Base_Contexto` | Treino com descanso + jogos importantes |
+| `Overlay_Calendario` | Relatório do overlay mid-week |
+
+Aba de resultados (você atualiza): **`Jogos`**.
+
+| Modo | Fonte |
+|------|--------|
+| Média / Repetir 1º turno | Só aba `Jogos` |
+| Regressão | `Projecoes_Regressao` (+ gap-fill média se faltar jogo) |
+| Probabilístico | `Projecoes_Prob` / `Match_Forecasts` / `Classif_Prob_MC` |
+
+```bash
+# Segunda 03:00: gera brasileirao_modelos.xlsx
+python scripts/weekly_retrain.py --budget fast
+```
 
 ### Modelos disponíveis (challengers)
 
