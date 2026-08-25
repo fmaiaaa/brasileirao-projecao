@@ -180,6 +180,7 @@ class GoogleDriveDataSource(DataSource):
         file_url: str | None = None,
         cache_dir: Path | str = "artifacts/prob_ml/cache",
         credentials_json: str | None = None,
+        credentials_path: str | Path | None = None,
     ):
         raw_id = file_id or os.environ.get("GOOGLE_DRIVE_FILE_ID", "")
         raw_url = file_url or os.environ.get("GOOGLE_DRIVE_FILE_URL", "")
@@ -195,18 +196,25 @@ class GoogleDriveDataSource(DataSource):
         self.credentials_json = credentials_json or os.environ.get(
             "GOOGLE_SERVICE_ACCOUNT_JSON"
         )
+        self.credentials_path = credentials_path or os.environ.get(
+            "GOOGLE_SERVICE_ACCOUNT_FILE"
+        )
 
     def _credentials(self):
         from google.oauth2 import service_account
 
-        if not self.credentials_json:
-            raise RuntimeError(
-                "GOOGLE_SERVICE_ACCOUNT_JSON ausente (JSON da service account)"
+        scopes = ["https://www.googleapis.com/auth/drive.readonly"]
+        if self.credentials_json:
+            info = json.loads(self.credentials_json)
+            return service_account.Credentials.from_service_account_info(
+                info, scopes=scopes
             )
-        info = json.loads(self.credentials_json)
-        return service_account.Credentials.from_service_account_info(
-            info,
-            scopes=["https://www.googleapis.com/auth/drive.readonly"],
+        if self.credentials_path and Path(self.credentials_path).exists():
+            return service_account.Credentials.from_service_account_file(
+                str(self.credentials_path), scopes=scopes
+            )
+        raise RuntimeError(
+            "Defina GOOGLE_SERVICE_ACCOUNT_JSON ou GOOGLE_SERVICE_ACCOUNT_FILE"
         )
 
     def load_raw(self) -> pd.DataFrame:

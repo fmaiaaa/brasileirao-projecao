@@ -18,12 +18,16 @@ goal_support: 8
 tail_mass_floor: 1.0e-12
 
 data:
-  source: local  # local | google_drive
-  local_path: dados/fpt_matches.parquet
-  google_drive_file_id: ""
-  google_drive_file_url: ""
+  source: local  # local até o arquivo ser compartilhado com a service account; depois: google_drive
+  local_path: dados/fpt_matches.csv
+  google_drive_file_id: "12rP2nVmKF-VMyY1Oq47Oo7H34ADfxbTV"
+  google_drive_file_url: "https://drive.google.com/file/d/12rP2nVmKF-VMyY1Oq47Oo7H34ADfxbTV/view?usp=sharing"
   cache_dir: artifacts/prob_ml/cache
   schema_map_path: config/schema_map.yaml
+  # Compartilhar o arquivo no Drive com:
+  #   futpythontrader@futpythontraderbr.iam.gserviceaccount.com
+  # (leitura). Depois mude source: google_drive
+
 
 features:
   rolling_windows: [3, 5, 8, 10]

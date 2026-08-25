@@ -80,6 +80,20 @@ No Streamlit, o treino/avaliação só dispara ao selecionar o modo **Probabilí
 
 Champion, pesos e NLL só são gravados após backtest real (`artifacts/prob_ml/status.json`). Sem histórico multi-temporada FPT, o status pode permanecer `not_evaluated` ou treinar só no calendário 2026.
 
+### Google Drive (base FPT)
+
+File ID configurado: `12rP2nVmKF-VMyY1Oq47Oo7H34ADfxbTV`
+
+1. No Google Drive, compartilhe o arquivo (**Leitor**) com:  
+   `futpythontrader@futpythontraderbr.iam.gserviceaccount.com`
+2. Secrets/env: `GOOGLE_SERVICE_ACCOUNT_JSON` (ou `GOOGLE_SERVICE_ACCOUNT_FILE`) + opcionalmente `GOOGLE_DRIVE_FILE_ID`
+3. Em `config/prob_ml.yaml`: `data.source: google_drive`
+4. Localmente, enquanto o share não estiver ativo, o app usa `dados/fpt_matches.csv` (gitignored)
+
+```bash
+python scripts/train_pipeline.py --budget fast
+```
+
 ### Google Drive (preparado — aguardando link)
 
 1. Compartilhe **um único arquivo** (CSV/Excel/Parquet) com a service account  
