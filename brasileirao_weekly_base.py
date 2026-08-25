@@ -123,7 +123,31 @@ def load_regressao_calendar() -> pd.DataFrame | None:
 
 
 def load_regressao_coefs() -> pd.DataFrame | None:
-    return load_sheet(SHEET_COEFS_REG)
+    df = load_sheet(SHEET_COEFS_REG)
+    if df is None or df.empty:
+        return None
+    df = df.copy()
+    # Sheets (locale BR) devolve "0,8888" → Streamlit NumberColumn vira 8888
+    r2_col = None
+    for c in df.columns:
+        cl = str(c).strip().lower().replace("²", "2")
+        if cl in {"r2", "r²"} or cl.replace(" ", "") == "r2":
+            r2_col = c
+            break
+    if r2_col is not None:
+        def _r2(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return None
+            s = str(v).strip().replace(",", ".")
+            if s == "" or s.lower() in {"nan", "none", "-", "—"}:
+                return None
+            try:
+                return round(float(s), 4)
+            except (TypeError, ValueError):
+                return None
+
+        df[r2_col] = df[r2_col].map(_r2)
+    return df
 
 
 def load_prob_projecoes() -> pd.DataFrame | None:

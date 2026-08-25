@@ -243,13 +243,40 @@ def _df_to_values(df: pd.DataFrame) -> list[list[Any]]:
     if df is None or df.empty:
         return [[]]
     out = df.copy()
-    # evita Timestamp/NaN problemáticos no Sheets
-    for c in out.columns:
-        out[c] = out[c].apply(
-            lambda x: ""
-            if x is None or (isinstance(x, float) and pd.isna(x))
-            else (str(x) if not isinstance(x, (str, int, float, bool)) else x)
-        )
+
+    def _cell(x: Any) -> Any:
+        if x is None:
+            return ""
+        try:
+            if isinstance(x, float) and pd.isna(x):
+                return ""
+        except Exception:
+            pass
+        if isinstance(x, (int, float, bool)):
+            return x
+        return str(x)
+
+    for c in list(out.columns):
+        cl = str(c).strip().lower().replace("²", "2").replace(" ", "")
+        if cl == "r2":
+            def _fmt_r2(x: Any) -> str:
+                if x is None:
+                    return ""
+                try:
+                    if isinstance(x, float) and pd.isna(x):
+                        return ""
+                except Exception:
+                    pass
+                s = str(x).strip().replace(",", ".")
+                try:
+                    return f"{float(s):.4f}"
+                except (TypeError, ValueError):
+                    return str(x)
+
+            out[c] = out[c].map(_fmt_r2)
+        else:
+            out[c] = out[c].map(_cell)
+
     header = [str(c) for c in out.columns]
     rows = out.astype(object).where(pd.notnull(out), "").values.tolist()
     return [header] + rows

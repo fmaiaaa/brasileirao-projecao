@@ -454,11 +454,21 @@ with st.expander("Detalhes do modelo"):
         )
         _coefs = load_regressao_coefs()
         if _coefs is not None and not _coefs.empty:
+            _coefs_show = _coefs.copy()
+            # garante rótulo legível (0.8888), nunca 8888
+            for _c in list(_coefs_show.columns):
+                if str(_c).strip().lower().replace("²", "2") in {"r2", "r²"}:
+                    _coefs_show[_c] = _coefs_show[_c].map(
+                        lambda v: f"{float(v):.4f}"
+                        if v is not None and str(v).strip() != ""
+                        else ""
+                    )
+                    break
             _tabela(
-                _coefs,
+                _coefs_show,
                 column_config={
                     "Time": st.column_config.TextColumn("Time", pinned="left"),
-                    "R²": st.column_config.NumberColumn("R²", format="%.3f"),
+                    "R²": st.column_config.TextColumn("R²", width="small"),
                 },
                 key="tbl_reg",
             )
