@@ -239,9 +239,29 @@ def estatisticas_contexto_por_time(ano: int) -> pd.DataFrame:
         comp = df["competition"].astype(str).str.lower()
         df = df[comp.str.contains("serie_a|serie a|betano", regex=True, na=False)]
     df = df[pd.to_numeric(df.get("season"), errors="coerce") == int(ano)]
-    df = df[df["home_goals"].notna() & df["away_goals"].notna()].copy()
+    # placar: aceita numérico ou string (Sheets)
+    hg = pd.to_numeric(df.get("home_goals"), errors="coerce")
+    ag = pd.to_numeric(df.get("away_goals"), errors="coerce")
+    df = df.loc[hg.notna() & ag.notna()].copy()
     if df.empty:
         return pd.DataFrame()
+
+    def _num(val: Any) -> float | None:
+        if val is None:
+            return None
+        try:
+            if isinstance(val, float) and pd.isna(val):
+                return None
+        except Exception:
+            pass
+        s = str(val).strip()
+        if s == "" or s.lower() in {"nan", "none", "-", "—"}:
+            return None
+        s = s.replace(",", ".")
+        try:
+            return float(s)
+        except (TypeError, ValueError):
+            return None
 
     rows: dict[str, dict[str, float]] = {}
 
@@ -260,21 +280,26 @@ def estatisticas_contexto_por_time(ano: int) -> pd.DataFrame:
 
     for _, r in df.iterrows():
         h, a = str(r["home_team"]).strip(), str(r["away_team"]).strip()
+        if not h or h.lower() == "nan" or not a or a.lower() == "nan":
+            continue
         for team, rest_col, imp_col, xg_for_col, xg_ag_col in (
             (h, "home_rest_days", "home_important", "home_xg", "away_xg"),
             (a, "away_rest_days", "away_important", "away_xg", "home_xg"),
         ):
             acc = _acc(team)
             acc["n"] += 1
-            if pd.notna(r.get(rest_col)):
-                acc["rest_sum"] += float(r[rest_col])
+            rest = _num(r.get(rest_col))
+            if rest is not None:
+                acc["rest_sum"] += rest
                 acc["rest_n"] += 1
-            imp = str(r.get(imp_col) or "Não tem")
+            imp = str(r.get(imp_col) or "Não tem").strip()
             if imp and imp != "Não tem" and imp.lower() != "nan":
                 acc["imp_n"] += 1
-            if pd.notna(r.get(xg_for_col)) and pd.notna(r.get(xg_ag_col)):
-                acc["xg_for"] += float(r[xg_for_col])
-                acc["xg_against"] += float(r[xg_ag_col])
+            xgf = _num(r.get(xg_for_col))
+            xga = _num(r.get(xg_ag_col))
+            if xgf is not None and xga is not None:
+                acc["xg_for"] += xgf
+                acc["xg_against"] += xga
                 acc["xg_n"] += 1
 
     out_rows = []
@@ -312,7 +337,10 @@ def estatisticas_contexto_por_time(ano: int) -> pd.DataFrame:
 def enriquecer_stats_com_contexto(
     df_stats: pd.DataFrame, ano: int
 ) -> pd.DataFrame:
-    extra = estatisticas_contexto_por_time(int(ano))
+    try:
+        extra = estatisticas_contexto_por_time(int(ano))
+    except Exception:
+        return df_stats
     if extra.empty or df_stats is None or df_stats.empty:
         return df_stats
     # merge por nome aproximado
