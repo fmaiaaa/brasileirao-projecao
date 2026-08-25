@@ -213,8 +213,24 @@ class GoogleDriveDataSource(DataSource):
             return service_account.Credentials.from_service_account_file(
                 str(self.credentials_path), scopes=scopes
             )
+        # Mesmas secrets do Streamlit / planilha (streamlit-bot@bot-promocional...)
+        try:
+            from brasileirao_gsheets import (
+                montar_service_account_info,
+                _secrets_connections_gsheets,
+            )
+
+            info = montar_service_account_info(_secrets_connections_gsheets())
+            if info:
+                return service_account.Credentials.from_service_account_info(
+                    info, scopes=scopes
+                )
+        except Exception:
+            pass
         raise RuntimeError(
-            "Defina GOOGLE_SERVICE_ACCOUNT_JSON ou GOOGLE_SERVICE_ACCOUNT_FILE"
+            "Defina GOOGLE_SERVICE_ACCOUNT_JSON / GOOGLE_SERVICE_ACCOUNT_FILE "
+            "ou [connections.gsheets] no secrets.toml "
+            "(ex.: streamlit-bot@bot-promocional.iam.gserviceaccount.com)"
         )
 
     def load_raw(self) -> pd.DataFrame:

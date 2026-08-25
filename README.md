@@ -85,7 +85,8 @@ Champion, pesos e NLL só são gravados após backtest real (`artifacts/prob_ml/
 File ID configurado: `12rP2nVmKF-VMyY1Oq47Oo7H34ADfxbTV`
 
 1. No Google Drive, compartilhe o arquivo (**Leitor**) com:  
-   `futpythontrader@futpythontraderbr.iam.gserviceaccount.com`
+   `streamlit-bot@bot-promocional.iam.gserviceaccount.com`  
+   (mesma conta das secrets `[connections.gsheets]` do Streamlit)
 2. Secrets/env: `GOOGLE_SERVICE_ACCOUNT_JSON` (ou `GOOGLE_SERVICE_ACCOUNT_FILE`) + opcionalmente `GOOGLE_DRIVE_FILE_ID`
 3. Em `config/prob_ml.yaml`: `data.source: google_drive`
 4. Localmente, enquanto o share não estiver ativo, o app usa `dados/fpt_matches.csv` (gitignored)
