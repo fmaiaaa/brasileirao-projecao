@@ -138,13 +138,20 @@ def load_regressao_coefs() -> pd.DataFrame | None:
         def _r2(v):
             if v is None or (isinstance(v, float) and pd.isna(v)):
                 return None
-            s = str(v).strip().replace(",", ".")
+            s = str(v).strip().lstrip("'")
             if s == "" or s.lower() in {"nan", "none", "-", "—"}:
                 return None
+            # Locale BR: "0,8888" ok; "8.888"/"8888" = 0.8888 corrompido por milhar
             try:
-                return round(float(s), 4)
+                val = float(s.replace(",", "."))
             except (TypeError, ValueError):
                 return None
+            if val > 1.0:
+                digits = "".join(ch for ch in s if ch.isdigit())
+                if not digits:
+                    return None
+                val = float("0." + digits[:4].ljust(4, "0")[:4])
+            return round(val, 4)
 
         df[r2_col] = df[r2_col].map(_r2)
     return df

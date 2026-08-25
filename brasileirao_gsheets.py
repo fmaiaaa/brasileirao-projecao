@@ -260,6 +260,8 @@ def _df_to_values(df: pd.DataFrame) -> list[list[Any]]:
         cl = str(c).strip().lower().replace("²", "2").replace(" ", "")
         if cl == "r2":
             def _fmt_r2(x: Any) -> str:
+                # USER_ENTERED + locale BR: "0.8888" vira milhar 8888 ("8.888").
+                # Prefixo ' força texto; vírgula = decimal BR se a Sheets converter.
                 if x is None:
                     return ""
                 try:
@@ -267,11 +269,16 @@ def _df_to_values(df: pd.DataFrame) -> list[list[Any]]:
                         return ""
                 except Exception:
                     pass
-                s = str(x).strip().replace(",", ".")
+                s = str(x).strip().lstrip("'").replace(",", ".")
                 try:
-                    return f"{float(s):.4f}"
+                    v = float(s)
                 except (TypeError, ValueError):
                     return str(x)
+                if v > 1.0:
+                    digits = "".join(ch for ch in s if ch.isdigit())
+                    if digits:
+                        v = float("0." + digits[:4].ljust(4, "0")[:4])
+                return f"'{v:.4f}".replace(".", ",")
 
             out[c] = out[c].map(_fmt_r2)
         else:

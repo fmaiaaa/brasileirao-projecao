@@ -455,14 +455,24 @@ with st.expander("Detalhes do modelo"):
         _coefs = load_regressao_coefs()
         if _coefs is not None and not _coefs.empty:
             _coefs_show = _coefs.copy()
-            # garante rótulo legível (0.8888), nunca 8888
+            # garante rótulo legível (0.8888), nunca 8888 / 8.888
             for _c in list(_coefs_show.columns):
                 if str(_c).strip().lower().replace("²", "2") in {"r2", "r²"}:
-                    _coefs_show[_c] = _coefs_show[_c].map(
-                        lambda v: f"{float(v):.4f}"
-                        if v is not None and str(v).strip() != ""
-                        else ""
-                    )
+                    def _fmt_r2_ui(v):
+                        if v is None or str(v).strip() == "":
+                            return ""
+                        s = str(v).strip().lstrip("'")
+                        try:
+                            x = float(s.replace(",", "."))
+                        except (TypeError, ValueError):
+                            return s
+                        if x > 1.0:
+                            digits = "".join(ch for ch in s if ch.isdigit())
+                            if digits:
+                                x = float("0." + digits[:4].ljust(4, "0")[:4])
+                        return f"{x:.4f}"
+
+                    _coefs_show[_c] = _coefs_show[_c].map(_fmt_r2_ui)
                     break
             _tabela(
                 _coefs_show,
