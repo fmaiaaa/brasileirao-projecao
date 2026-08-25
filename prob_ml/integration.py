@@ -130,15 +130,36 @@ def fit_from_jogos(
     return bundle
 
 
+def _safe_float(val, default: float | None = None) -> float | None:
+    if val is None:
+        return default
+    try:
+        import pandas as _pd
+
+        if isinstance(val, float) and _pd.isna(val):
+            return default
+    except Exception:
+        pass
+    s = str(val).strip()
+    if s == "" or s.lower() in {"nan", "none", "-", "—", "null"}:
+        return default
+    s = s.replace(",", ".")
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return default
+
+
 def aplicar_projecoes_de_csv(
     jogos: list[Jogo],
     calendar_csv: pd.DataFrame,
 ) -> tuple[list[Jogo], pd.DataFrame]:
-    """Aplica xPts de CSV offline aos jogos pendentes do calendário."""
+    """Aplica xPts de CSV/Sheets offline aos jogos pendentes do calendário."""
     jogos = [Jogo(**j.__dict__) for j in jogos]
     df = calendar_csv.copy()
     # normaliza nomes de colunas
     colmap = {c.lower().strip(): c for c in df.columns}
+
     def col(*names: str) -> str | None:
         for n in names:
             if n.lower() in colmap:
@@ -158,12 +179,15 @@ def aplicar_projecoes_de_csv(
 
     by_key: dict[tuple, dict] = {}
     for _, row in df.iterrows():
-        try:
-            r = int(float(row[c_r])) if c_r else -1
-        except Exception:
-            r = -1
-        m = str(row[c_m]) if c_m else ""
-        v = str(row[c_v]) if c_v else ""
+        r = -1
+        if c_r:
+            rv = _safe_float(row[c_r])
+            if rv is not None:
+                r = int(rv)
+        m = str(row[c_m]).strip() if c_m else ""
+        v = str(row[c_v]).strip() if c_v else ""
+        if not m or not v or m.lower() == "nan":
+            continue
         by_key[(m, v, r)] = row.to_dict()
         by_key[(m, v, -1)] = row.to_dict()
 
@@ -174,21 +198,25 @@ def aplicar_projecoes_de_csv(
         row = by_key.get((j.mand, j.vis, j.r)) or by_key.get((j.mand, j.vis, -1))
         if row is None:
             continue
-        if c_xph and c_xpv and row.get(c_xph) is not None:
-            j.proj_pm = float(row[c_xph])
-            j.proj_pv = float(row[c_xpv])
-        elif c_proj and row.get(c_proj):
+        pm = pv = None
+        if c_xph and c_xpv:
+            pm = _safe_float(row.get(c_xph))
+            pv = _safe_float(row.get(c_xpv))
+        if (pm is None or pv is None) and c_proj and row.get(c_proj):
             parts = str(row[c_proj]).replace(",", ".").split("/")
             if len(parts) == 2:
-                j.proj_pm = float(parts[0].strip())
-                j.proj_pv = float(parts[1].strip())
+                pm = _safe_float(parts[0].strip(), pm)
+                pv = _safe_float(parts[1].strip(), pv)
+        if pm is None or pv is None:
+            continue
+        j.proj_pm, j.proj_pv = float(pm), float(pv)
         j.origem = "prob_ml/offline_csv"
         log_rows.append(
             {
                 "Rodada": j.r,
                 "Mandante": j.mand,
                 "Visitante": j.vis,
-                "Proj": f"{(j.proj_pm or 0):.2f} / {(j.proj_pv or 0):.2f}",
+                "Proj": f"{j.proj_pm:.2f} / {j.proj_pv:.2f}",
                 "λ": row.get(c_lam, "") if c_lam else "",
                 "1X2": row.get(c_1x2, "") if c_1x2 else "",
             }

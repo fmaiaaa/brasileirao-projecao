@@ -57,7 +57,6 @@ from brasileirao_weekly_base import (
     load_regressao_coefs,
     modelos_ready,
     regressao_ready,
-    weekly_meta_caption,
 )
 
 _PLOTLY_CONFIG = {
@@ -453,7 +452,6 @@ with st.expander("Detalhes do modelo"):
             "jogos sem linha na base semanal usam gap-fill de média (calendário). "
             "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
         )
-        st.caption(weekly_meta_caption())
         _coefs = load_regressao_coefs()
         if _coefs is not None and not _coefs.empty:
             _tabela(
@@ -463,11 +461,6 @@ with st.expander("Detalhes do modelo"):
                     "R²": st.column_config.NumberColumn("R²", format="%.3f"),
                 },
                 key="tbl_reg",
-            )
-        else:
-            st.warning(
-                "Coeficientes da regressão ausentes. "
-                "Rode `python scripts/weekly_retrain.py` (ou aguarde a segunda 03:00)."
             )
     elif modo == "media_simples":
         st.caption(
@@ -487,18 +480,12 @@ with st.expander("Detalhes do modelo"):
         )
     elif modo == "prob_ml":
         st.caption(
-            "Previsões e Monte Carlo da base XLSX semanal "
-            "(arquivo brasileirao_modelos.xlsx / abas na planilha de resultados). "
-            "Placares novos na aba Jogos saem da projeção; "
-            "jogos sem linha na base usam gap-fill de média. "
-            "Sem download FPT e sem retreino no app."
+            "Previsões e Monte Carlo da base semanal (planilha Sheets). "
+            "Placares novos saem da projeção; jogos sem linha usam gap-fill de média."
         )
-        st.caption(weekly_meta_caption())
         _met = load_prob_metricas()
         if _met is not None and not _met.empty:
             _tabela(_met, key="tbl_metricas_prob")
-        else:
-            st.info("Métricas OOF: aguardando a base semanal (segunda 03:00).")
     else:
         st.caption(
             "Jogos do 1º turno deste Brasileirão usados como referência para espelhar a volta "
@@ -509,22 +496,13 @@ with st.expander("Detalhes do modelo"):
         _tabela(tabela_jogos_primeiro_turno(_jogos_base), key="tbl_turno")
 
 if modo == "prob_ml":
-    if not modelos_ready():
-        st.error(
-            "Base de modelos ausente. Coloque `brasileirao_modelos.xlsx` "
-            "junto à base de resultados (ex.: pasta dados/) ou cole as abas "
-            "na planilha Google Sheets. O app não treina ao vivo."
-        )
-        st.stop()
-
-    st.caption(weekly_meta_caption())
-    _cal = load_prob_projecoes()
-    _stand = load_prob_standings()
-    _fc = load_prob_forecasts()
+    _cal = load_prob_projecoes() if modelos_ready() else None
+    _stand = load_prob_standings() if modelos_ready() else None
+    _fc = load_prob_forecasts() if modelos_ready() else None
 
     jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
         _jogos_base,
-        _cal if _cal is not None and not _cal.empty else _fc,
+        _cal if _cal is not None and not getattr(_cal, "empty", True) else _fc,
         r_ini=r_ini_proj,
         r_fim=r_fim_proj,
         origem="prob_ml/xlsx",
@@ -533,6 +511,8 @@ if modo == "prob_ml":
     if _stand is not None and not _stand.empty:
         _prob_sim_df = _stand
     if _fc is not None and not _fc.empty:
+        from prob_ml.integration import _safe_float as _sf
+
         pend_pairs = {(j.mand, j.vis) for j in _jogos_base if not j.jogado}
         _prob_preds = [
             p
@@ -545,14 +525,16 @@ if modo == "prob_ml":
         ]
 
     if _prob_preds:
+        from prob_ml.integration import _safe_float as _sf
+
         for p in _prob_preds:
-            p.setdefault("xg_home", float(p.get("xg_home", 0) or 0))
-            p.setdefault("xg_away", float(p.get("xg_away", 0) or 0))
-            p.setdefault("p_home", float(p.get("p_home", 0) or 0))
-            p.setdefault("p_draw", float(p.get("p_draw", 0) or 0))
-            p.setdefault("p_away", float(p.get("p_away", 0) or 0))
-            p.setdefault("over_25", float(p.get("over_25", 0) or 0))
-            p.setdefault("btts_yes", float(p.get("btts_yes", 0) or 0))
+            p["xg_home"] = _sf(p.get("xg_home"), 0.0) or 0.0
+            p["xg_away"] = _sf(p.get("xg_away"), 0.0) or 0.0
+            p["p_home"] = _sf(p.get("p_home"), 0.0) or 0.0
+            p["p_draw"] = _sf(p.get("p_draw"), 0.0) or 0.0
+            p["p_away"] = _sf(p.get("p_away"), 0.0) or 0.0
+            p["over_25"] = _sf(p.get("over_25"), 0.0) or 0.0
+            p["btts_yes"] = _sf(p.get("btts_yes"), 0.0) or 0.0
             tops = p.get("top_scores")
             if isinstance(tops, str):
                 try:
@@ -565,16 +547,9 @@ if modo == "prob_ml":
                 p["top_scores"] = []
 
 elif modo_e_regressao_acumulada(modo):
-    if not regressao_ready():
-        st.error(
-            "Aba Projecoes_Regressao ausente. "
-            "Coloque `brasileirao_modelos.xlsx` junto aos resultados."
-        )
-        st.stop()
-    st.caption(weekly_meta_caption())
     jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
         _jogos_base,
-        load_regressao_calendar(),
+        load_regressao_calendar() if regressao_ready() else None,
         r_ini=r_ini_proj,
         r_fim=r_fim_proj,
         origem="regressao/xlsx",
@@ -588,7 +563,11 @@ else:
 titulo_secao("Classificação")
 _df_classif = tabela_comparativa_posicoes(_jogos_base, jogos_proj)
 if modo == "prob_ml" and _prob_sim_df is not None and not getattr(_prob_sim_df, "empty", True):
-    _mc = _prob_sim_df.set_index("Time")
+    from prob_ml.integration import _safe_float as _sf
+
+    _mc = _prob_sim_df.copy()
+    if "Time" in _mc.columns:
+        _mc = _mc.drop_duplicates(subset=["Time"], keep="first").set_index("Time")
     for col_src, col_dst in (
         ("Prob. Campeão", "Prob. Campeão"),
         ("Prob. G4", "Prob. G4"),
@@ -598,7 +577,7 @@ if modo == "prob_ml" and _prob_sim_df is not None and not getattr(_prob_sim_df, 
     ):
         if col_src in _mc.columns and col_dst in _df_classif.columns:
             _df_classif[col_dst] = _df_classif["Time"].map(
-                lambda t, c=col_src: float(_mc.loc[t, c]) if t in _mc.index else None
+                lambda t, c=col_src: _sf(_mc.loc[t, c]) if t in _mc.index else None
             )
 _tabela(
     _df_classif,
