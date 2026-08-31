@@ -12,8 +12,6 @@ from typing import Any
 
 import pandas as pd
 
-from recency import allowed_seasons, load_recency_settings
-
 from brasileirao_projecao_core import (
     ARQUIVO_CALENDARIO,
     Jogo,
@@ -176,9 +174,8 @@ def load_base_contexto() -> pd.DataFrame | None:
 
 
 def anos_disponiveis_estatisticas(*, ano_atual: int = 2026) -> list[int]:
-    """Anos com Série A na Base_Contexto — limitado aos últimos 3 anos civis."""
-    rcfg = load_recency_settings()
-    anos: set[int] = {int(ano_atual)}
+    """Anos com Série A na Base_Contexto — temporada atual e anterior."""
+    anos: set[int] = {int(ano_atual), int(ano_atual) - 1}
     ctx = load_base_contexto()
     if ctx is not None and not ctx.empty and "season" in ctx.columns:
         df = ctx.copy()
@@ -186,9 +183,9 @@ def anos_disponiveis_estatisticas(*, ano_atual: int = 2026) -> list[int]:
             comp = df["competition"].astype(str).str.lower()
             df = df[comp.str.contains("serie_a|serie a|betano", regex=True, na=False)]
         for s in pd.to_numeric(df["season"], errors="coerce").dropna().unique():
-            anos.add(int(s))
-    allowed = allowed_seasons(ref=date(ano_atual, 6, 1), years=int(rcfg["history_years"]))
-    return sorted(anos & allowed, reverse=True)
+            if int(s) in anos:
+                anos.add(int(s))
+    return sorted(anos, reverse=True)
 
 
 def jogos_serie_a_ano(ano: int) -> list[Jogo]:

@@ -100,21 +100,27 @@ def load_matches_for_training(
         matches, ov = overlay_fpt_with_calendar(matches, jogos)
         report["calendar_overlay"] = ov
 
+    from brasileirao_projecao_core import times_do_calendario
+
     rcfg = load_recency_settings(cfg)
+    cal_teams = times_do_calendario(jogos) if jogos else None
     n_before = len(matches)
     matches = filter_matches_dataframe(
         matches,
-        years=int(rcfg["history_years"]),
+        history_rounds=int(rcfg["history_rounds"]),
+        calendar_teams=cal_teams,
     )
     matches = attach_sample_weights(
         matches,
-        half_life_days=float(rcfg["half_life_days"]),
+        half_life_rounds=float(rcfg["half_life_rounds"]),
+        calendar_teams=cal_teams,
     )
     report["recency_filter"] = {
-        "history_years": int(rcfg["history_years"]),
-        "half_life_days": float(rcfg["half_life_days"]),
+        "history_rounds": int(rcfg["history_rounds"]),
+        "half_life_rounds": float(rcfg["half_life_rounds"]),
         "n_before": n_before,
         "n_after": len(matches),
+        "promoted_serie_b": True,
     }
 
     return matches, report

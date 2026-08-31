@@ -11,11 +11,12 @@ import pandas as pd
 
 from recency import (
     elastic_net_lstsq,
-    filter_jogos_by_recency,
+    filter_jogos_by_round_window,
     load_recency_settings,
     load_regression_settings,
+    weight_for_jogo,
     weighted_mean,
-    weights_for_match_dates,
+    weights_for_panel_rounds,
 )
 
 ModoProjecao = Literal[
@@ -681,11 +682,16 @@ def regressao_beta(
 ) -> dict[str, float]:
     """Coeficientes de regressão por jogo conforme variante."""
     rcfg = load_recency_settings()
-    jogos_use = filter_jogos_by_recency(jogos, years=int(rcfg["history_years"]))
+    jogos_use = filter_jogos_by_round_window(
+        jogos, n_rounds=int(rcfg["history_rounds"])
+    )
     rodadas, casa, turno, y, adversarios, formas, datas = _coletar_obs_regressao(
         jogos_use, time, r_ini, r_fim
     )
-    obs_w = weights_for_match_dates(datas, half_life_days=float(rcfg["half_life_days"]))
+    r_latest = float(max(rodadas)) if len(rodadas) else float(r_fim)
+    obs_w = weights_for_panel_rounds(
+        rodadas, r_latest=r_latest, half_life_rounds=float(rcfg["half_life_rounds"])
+    )
     coefs = _ajustar_regressao(
         rodadas, casa, turno, y, adversarios, forca_map, variante, formas, obs_w
     )
@@ -1261,9 +1267,9 @@ def ajustar_painel_efeitos_fixos(
             bloco_raw = (
                 remap_block_teams(bloco, cal_set) if remap_block_teams else bloco
             )
-            bloco_use = filter_jogos_by_recency(
+            bloco_use = filter_jogos_by_round_window(
                 bloco_raw,
-                years=int(rcfg["history_years"]),
+                n_rounds=int(rcfg["history_rounds"]),
             )
             if not bloco_use:
                 continue
@@ -1291,7 +1297,9 @@ def ajustar_painel_efeitos_fixos(
     forma = np.array(forma_l, dtype=float)
     descanso = np.array(descanso_l, dtype=float)
     importante = importante_l
-    obs_w = weights_for_match_dates(datas_l, half_life_days=float(rcfg["half_life_days"]))
+    obs_w = weights_for_panel_rounds(
+        r_l, half_life_rounds=float(rcfg["half_life_rounds"])
+    )
 
     # FE: times do calendário + quaisquer times extras que apareceram no painel
     times = list(times_alvo)
@@ -1815,7 +1823,9 @@ def regressao_acumulada_beta(
         try:
             from brasileirao_multi_liga import carregar_blocos_treino_regressao
 
-            blocos_extra = carregar_blocos_treino_regressao()
+            blocos_extra = carregar_blocos_treino_regressao(
+                calendar_teams=set(times_do_calendario(jogos))
+            )
         except Exception:
             blocos_extra = []
     painel = ajustar_painel_efeitos_fixos(
@@ -1884,10 +1894,13 @@ def media_pts_jogo(
 ) -> dict[str, float]:
     """
     Média ponderada de pontos por jogo no intervalo [r_ini, r_fim].
-    Pesos decaem exponencialmente conforme a data da partida (recência).
+    Pesos decaem progressivamente conforme a rodada fica mais distante da mais recente.
     """
     rcfg = load_recency_settings()
-    jogos_use = filter_jogos_by_recency(jogos, years=int(rcfg["history_years"]))
+    jogos_use = filter_jogos_by_round_window(
+        jogos, n_rounds=int(rcfg["history_rounds"])
+    )
+    r_latest = max((j.r for j in jogos_use if j.jogado), default=r_fim)
     pts_total: list[float] = []
     w_total: list[float] = []
     pts_casa: list[float] = []
@@ -1901,11 +1914,10 @@ def media_pts_jogo(
         pm, pv = j.pts_reais()
         if pm is None or pv is None:
             continue
-        w = float(
-            weights_for_match_dates(
-                [j.data or ""],
-                half_life_days=float(rcfg["half_life_days"]),
-            )[0]
+        w = weight_for_jogo(
+            j,
+            r_latest=r_latest,
+            half_life_rounds=float(rcfg["half_life_rounds"]),
         )
         if j.mand == time:
             pts_total.append(float(pm))
@@ -2072,7 +2084,9 @@ def aplicar_projecoes_acumulada(
         try:
             from brasileirao_multi_liga import carregar_blocos_treino_regressao
 
-            blocos_extra = carregar_blocos_treino_regressao()
+            blocos_extra = carregar_blocos_treino_regressao(
+                calendar_teams=set(times_do_calendario(jogos))
+            )
         except Exception:
             blocos_extra = []
     painel = ajustar_painel_efeitos_fixos(
@@ -2366,7 +2380,9 @@ def tabela_regressao_acumulada_resumo(
         try:
             from brasileirao_multi_liga import carregar_blocos_treino_regressao
 
-            blocos_extra = carregar_blocos_treino_regressao()
+            blocos_extra = carregar_blocos_treino_regressao(
+                calendar_teams=set(times_do_calendario(jogos))
+            )
         except Exception:
             blocos_extra = []
     painel = ajustar_painel_efeitos_fixos(

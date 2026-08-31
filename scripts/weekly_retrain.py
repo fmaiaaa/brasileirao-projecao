@@ -76,10 +76,9 @@ logger = logging.getLogger("weekly_retrain")
 
 def _seasons_for_download(cfg) -> list[int]:
     from datetime import date
-    from recency import allowed_seasons, load_recency_settings
+    from recency import allowed_seasons
 
-    rcfg = load_recency_settings(cfg)
-    return sorted(allowed_seasons(ref=date.today(), years=int(rcfg["history_years"])))
+    return sorted(allowed_seasons(ref=date.today()))
 
 
 def _load_calendar() -> tuple[list[Jogo], str]:

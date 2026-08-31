@@ -94,16 +94,19 @@ def matches_df_to_jogo_blocks(
     matches: pd.DataFrame,
     *,
     exclude_serie_a_season: int | None = 2026,
+    calendar_teams: set[str] | None = None,
     cfg: dict | None = None,
 ) -> list[list[Jogo]]:
     """
     Cada bloco = uma temporada de um campeonato (força/forma calculadas dentro do bloco).
     Exclui Série A da temporada atual (já coberta pelo calendário do app).
+    Histórico: últimas 38 rodadas da Série A + Série B para times promovidos.
     """
     rcfg = load_recency_settings(cfg)
     df = filter_matches_dataframe(
         matches,
-        years=int(rcfg["history_years"]),
+        history_rounds=int(rcfg["history_rounds"]),
+        calendar_teams=calendar_teams,
     )
     df = df.copy()
     if "home_goals" not in df.columns:
@@ -166,6 +169,7 @@ def carregar_blocos_treino_regressao(
     cfg: dict[str, Any] | None = None,
     *,
     exclude_serie_a_season: int | None = 2026,
+    calendar_teams: set[str] | None = None,
 ) -> list[list[Jogo]]:
     cfg = cfg or load_config()
     path = ROOT / cfg.get("data", {}).get("local_path", "dados/fpt_matches.csv")
@@ -176,6 +180,7 @@ def carregar_blocos_treino_regressao(
     return matches_df_to_jogo_blocks(
         matches,
         exclude_serie_a_season=exclude_serie_a_season,
+        calendar_teams=calendar_teams,
         cfg=cfg,
     )
 

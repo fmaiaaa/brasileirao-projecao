@@ -1,8 +1,7 @@
-"""Testes de janela histórica e pesos por recência."""
+"""Testes de janela de 38 rodadas e pesos por distância de rodada."""
 from __future__ import annotations
 
 import sys
-from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -13,43 +12,76 @@ sys.path.insert(0, str(ROOT))
 
 from recency import (
     attach_sample_weights,
-    cutoff_date,
+    detect_promoted_teams,
     elastic_net_lstsq,
-    exponential_decay_weight,
-    filter_jogos_by_recency,
+    exponential_decay_rounds,
+    filter_jogos_by_round_window,
     filter_matches_dataframe,
     load_regression_settings,
+    weight_for_jogo,
     weighted_mean,
     wls_lstsq,
 )
 from brasileirao_projecao_core import Jogo, media_pts_jogo
 
 
-def test_cutoff_three_years():
-    ref = date(2026, 8, 31)
-    assert cutoff_date(ref=ref, years=3) == date(2024, 1, 1)
+def _serie_a_row(season: int, round_num: int, home: str, away: str) -> dict:
+    return {
+        "date": f"{season}-03-{min(round_num, 28):02d}",
+        "season": season,
+        "round": round_num,
+        "competition": "serie_a",
+        "home_team": home,
+        "away_team": away,
+        "home_goals": 1,
+        "away_goals": 0,
+    }
 
 
-def test_exponential_decay_old_games_much_lighter():
-    w_recent = exponential_decay_weight(7, half_life_days=120)
-    w_old = exponential_decay_weight(730, half_life_days=120)
+def test_exponential_decay_old_rounds_much_lighter():
+    w_recent = exponential_decay_rounds(1, half_life_rounds=12)
+    w_old = exponential_decay_rounds(37, half_life_rounds=12)
     assert w_recent > 0.9
-    assert w_old < 0.02
-    assert w_recent > 50 * w_old
+    assert w_old < 0.15
+    assert w_recent > 5 * w_old
 
 
-def test_filter_matches_dataframe():
-    ref = date(2026, 6, 1)
-    df = pd.DataFrame(
+def test_filter_matches_last_38_rounds():
+    rows = []
+    for r in range(1, 45):
+        rows.append(_serie_a_row(2025, r, "A", "B"))
+    df = pd.DataFrame(rows)
+    out = filter_matches_dataframe(df, history_rounds=38)
+    rounds = sorted(out["round"].unique())
+    assert len(rounds) == 38
+    assert rounds[0] == 7
+    assert rounds[-1] == 44
+
+
+def test_promoted_teams_get_serie_b_history():
+    sa_2025 = [_serie_a_row(2025, r, "TimeA", "TimeB") for r in range(1, 39)]
+    sa_2026 = [_serie_a_row(2026, r, "TimeA", "NovoTime") for r in range(1, 10)]
+    sb = [
         {
-            "date": ["2020-01-01", "2024-03-01", "2026-01-01"],
-            "season": [2020, 2024, 2026],
-            "home_goals": [1, 2, 1],
+            "date": "2025-08-01",
+            "season": 2025,
+            "round": 20,
+            "competition": "serie_b",
+            "home_team": "NovoTime",
+            "away_team": "Outro",
+            "home_goals": 2,
+            "away_goals": 1,
         }
+    ]
+    df = pd.DataFrame(sa_2025 + sa_2026 + sb)
+    promoted = detect_promoted_teams(df, calendar_teams={"TimeA", "NovoTime"}, current_season=2026)
+    assert "NovoTime" in promoted
+    out = filter_matches_dataframe(
+        df, history_rounds=38, calendar_teams={"TimeA", "NovoTime"}, current_season=2026
     )
-    out = filter_matches_dataframe(df, years=3, ref=ref)
-    assert len(out) == 2
-    assert 2020 not in set(out["season"])
+    sb_out = out[out["competition"] == "serie_b"]
+    assert len(sb_out) == 1
+    assert sb_out.iloc[0]["home_team"] == "NovoTime"
 
 
 def test_weighted_mean_and_wls():
@@ -61,35 +93,32 @@ def test_weighted_mean_and_wls():
     assert coef.shape == (2,)
 
 
-def test_media_pts_jogo_weighted_by_date():
-    ref = date(2026, 8, 31)
-    old = (ref - timedelta(days=800)).isoformat()
-    recent = (ref - timedelta(days=14)).isoformat()
-    jogos = [
-        Jogo(1, old, "", "A", "B", "0 x 3"),
-        Jogo(2, recent, "", "A", "C", "3 x 0"),
-    ]
-    m = media_pts_jogo(jogos, "A", 1, 2, "simples")
-    assert m["geral"] > 1.5
+def test_media_pts_jogo_weighted_by_round():
+    jogos = [Jogo(r, "", "", "A", "B", "0 x 3") for r in range(1, 50)]
+    jogos.append(Jogo(50, "", "", "A", "C", "3 x 0"))
+    m = media_pts_jogo(jogos, "A", 1, 50, "simples")
+    # Com decaimento, vitória recente pesa mais que a média uniforme (3/38)
+    assert m["geral"] > 3.0 / 38
+    w_new = weight_for_jogo(Jogo(50, "", "", "A", "C", "3 x 0"), r_latest=50)
+    w_old = weight_for_jogo(Jogo(13, "", "", "A", "B", "0 x 3"), r_latest=50)
+    assert w_new > 5 * w_old
 
 
-def test_filter_jogos_by_recency():
-    ref = date(2026, 8, 31)
-    jogos = [
-        Jogo(1, "2020-05-01", "", "X", "Y", "1 x 0"),
-        Jogo(2, "2025-05-01", "", "X", "Z", "1 x 0"),
-    ]
-    out = filter_jogos_by_recency(jogos, years=3, ref=ref)
-    assert len(out) == 1
-    assert out[0].vis == "Z"
+def test_filter_jogos_by_round_window():
+    jogos = [Jogo(r, "", "", "X", "Y", "1 x 0") for r in range(1, 50)]
+    out = filter_jogos_by_round_window(jogos, n_rounds=38)
+    played = [j.r for j in out if j.jogado]
+    assert min(played) == 12
+    assert max(played) == 49
 
 
-def test_attach_sample_weights_column():
-    ref = date(2026, 8, 31)
-    df = pd.DataFrame({"date": [ref - timedelta(days=d) for d in (0, 120, 480)]})
-    out = attach_sample_weights(df, ref=ref, half_life_days=120)
+def test_attach_sample_weights_by_round():
+    df = pd.DataFrame([_serie_a_row(2026, r, "A", "B") for r in (38, 30, 1)])
+    out = attach_sample_weights(df, half_life_rounds=12)
     assert "sample_weight" in out.columns
-    assert out["sample_weight"].iloc[0] > out["sample_weight"].iloc[-1]
+    w38 = out.loc[out["round"] == 38, "sample_weight"].iloc[0]
+    w1 = out.loc[out["round"] == 1, "sample_weight"].iloc[0]
+    assert w38 > w1
 
 
 def test_elastic_net_lstsq_returns_coef_vector():
@@ -98,6 +127,12 @@ def test_elastic_net_lstsq_returns_coef_vector():
     coef = elastic_net_lstsq(X, y)
     assert coef.shape == (3,)
     assert coef[1] > 0
+
+
+def test_weight_for_jogo():
+    j_old = Jogo(1, "", "", "A", "B", "1 x 0")
+    j_new = Jogo(20, "", "", "A", "C", "1 x 0")
+    assert weight_for_jogo(j_new, r_latest=20) > weight_for_jogo(j_old, r_latest=20)
 
 
 def test_indicador_casa_dummy():
