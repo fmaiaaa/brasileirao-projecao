@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 import numpy as np
 import pandas as pd
@@ -11,8 +11,23 @@ DEFAULT_HISTORY_ROUNDS = 38
 DEFAULT_HALF_LIFE_ROUNDS = 12.0
 DEFAULT_ELASTIC_NET_ALPHA = 0.01
 DEFAULT_ELASTIC_NET_L1_RATIO = 0.5
+DEFAULT_TRAINING_YEARS = 3
 SERIE_A = "serie_a"
 SERIE_B = "serie_b"
+
+JanelaTreino = Literal["2025", "ultimas_38_rodadas", "ultimos_3_anos"]
+
+JANELA_TREINO_LABELS: dict[JanelaTreino, str] = {
+    "2025": "Só 2025",
+    "ultimas_38_rodadas": "Últimas 38 rodadas",
+    "ultimos_3_anos": "Últimos 3 anos",
+}
+
+
+def anos_janela_tres_anos(ano_calendario: int, *, n_anos: int = DEFAULT_TRAINING_YEARS) -> list[int]:
+    """Temporadas completas anteriores ao calendário-alvo (ex.: 2026 → 2023–2025)."""
+    n = max(1, int(n_anos))
+    return list(range(int(ano_calendario) - n, int(ano_calendario)))
 
 
 def load_recency_settings(cfg: dict[str, Any] | None = None) -> dict[str, float | int]:

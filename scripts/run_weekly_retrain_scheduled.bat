@@ -20,6 +20,8 @@ if %ERRORLEVEL%==0 (
   git pull --ff-only origin main >> "%LOG%" 2>&1
 )
 
+"C:\Users\kaleb\AppData\Local\Programs\Python\Python313\python.exe" -m pip install -r requirements.txt -q >> "%LOG%" 2>&1
+
 "C:\Users\kaleb\AppData\Local\Programs\Python\Python313\python.exe" scripts\weekly_retrain.py --budget fast --no-backtest >> "%LOG%" 2>&1
 set EXIT=%ERRORLEVEL%
 echo ===== FIM %DATE% %TIME% exit=%EXIT% =====>> "%LOG%"

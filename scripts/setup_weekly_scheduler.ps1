@@ -1,4 +1,5 @@
 # Instala/atualiza a tarefa Windows BrasileiraoProbMLWeeklyRetrain (segundas 03:00).
+# Job: FPT + prob_ml + regressão FE/Kalman/XGBoost/GAM (3 janelas) → brasileirao_modelos.xlsx
 # Uso (PowerShell):
 #   cd scripts
 #   .\setup_weekly_scheduler.ps1

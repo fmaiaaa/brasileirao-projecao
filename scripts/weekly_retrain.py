@@ -47,8 +47,10 @@ from entrega_xlsx import (  # noqa: E402
     SHEET_LEIA_ME,
     SHEET_METRICAS,
     SHEET_OVERLAY,
+    SHEET_PROJ_MODELOS,
     SHEET_PROJ_PROB,
     SHEET_PROJ_REG,
+    SHEET_RESUMO_MODELOS,
     build_entrega_xlsx,
 )
 from brasileirao_gsheets import (  # noqa: E402
@@ -72,6 +74,110 @@ from prob_ml.simulation import result_to_frame, simulate_season  # noqa: E402
 from brasileirao_projecao_core import Jogo  # noqa: E402
 
 logger = logging.getLogger("weekly_retrain")
+
+MODELOS_ACUM_JANELAS = ("2025", "ultimas_38_rodadas", "ultimos_3_anos")
+MODELOS_ACUM_MODOS = (
+    ("Regressão FE", "regressao_completa"),
+    ("Kalman", "kalman_acumulada"),
+    ("XGBoost", "xgboost_acumulada"),
+    ("GAM", "gam_acumulada"),
+)
+
+
+def _gerar_modelos_acumulados(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+    *,
+    ano_calendario: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Projeções e resumo para FE/Kalman/XGBoost/GAM × 3 janelas de treino."""
+    from recency import JANELA_TREINO_LABELS, JanelaTreino
+    from modelos_acumulados import (
+        ajustar_modelo_acumulado,
+        coletar_painel_treino,
+        tabela_resumo_modelo,
+    )
+
+    proj_rows: list[dict] = []
+    resumo_rows: list[dict] = []
+
+    for janela in MODELOS_ACUM_JANELAS:
+        janela_t: JanelaTreino = janela  # type: ignore[assignment]
+        janela_lbl = JANELA_TREINO_LABELS[janela_t]
+        for nome, modo in MODELOS_ACUM_MODOS:
+            logger.info("Modelo acumulado: %s | janela=%s", nome, janela_lbl)
+            try:
+                _, log_df = aplicar_projecoes(
+                    jogos,
+                    modo,  # type: ignore[arg-type]
+                    r_ini,
+                    r_fim,
+                    "mandante_visitante",
+                    janela=janela_t,
+                    ano_calendario=ano_calendario,
+                )
+                for _, row in log_df.iterrows():
+                    proj_rows.append(
+                        {
+                            "Modelo": nome,
+                            "Janela": janela_lbl,
+                            "Rodada": row.get("Rodada"),
+                            "Mandante": row.get("Mandante"),
+                            "Visitante": row.get("Visitante"),
+                            "Proj": row.get("Proj"),
+                        }
+                    )
+                if modo == "regressao_completa":
+                    coefs = tabela_regressao_acumulada_resumo(
+                        jogos,
+                        r_ini,
+                        r_fim,
+                        "completa",
+                        janela=janela_t,
+                        ano_calendario=ano_calendario,
+                    )
+                    r2_val = None
+                    if coefs is not None and not coefs.empty and "R²" in coefs.columns:
+                        r2_val = coefs["R²"].iloc[0]
+                    resumo_rows.append(
+                        {
+                            "Modelo": nome,
+                            "Janela": janela_lbl,
+                            "N observações": coefs.shape[0] if coefs is not None else 0,
+                            "R²": r2_val,
+                        }
+                    )
+                else:
+                    tipo = modo.replace("_acumulada", "")
+                    painel = coletar_painel_treino(
+                        jogos, janela_t, ano_calendario=ano_calendario
+                    )
+                    modelo = ajustar_modelo_acumulado(painel, tipo, janela_t)  # type: ignore[arg-type]
+                    resumo = tabela_resumo_modelo(modelo)
+                    n_obs = resumo.loc[resumo["Campo"] == "N observações", "Valor"]
+                    r2 = resumo.loc[resumo["Campo"] == "R²", "Valor"]
+                    resumo_rows.append(
+                        {
+                            "Modelo": nome,
+                            "Janela": janela_lbl,
+                            "N observações": n_obs.iloc[0] if len(n_obs) else None,
+                            "R²": r2.iloc[0] if len(r2) else None,
+                        }
+                    )
+            except Exception as e:
+                logger.warning("Falha %s / %s: %s", nome, janela_lbl, e)
+                resumo_rows.append(
+                    {
+                        "Modelo": nome,
+                        "Janela": janela_lbl,
+                        "N observações": None,
+                        "R²": None,
+                        "Erro": str(e)[:200],
+                    }
+                )
+
+    return pd.DataFrame(proj_rows), pd.DataFrame(resumo_rows)
 
 
 def _seasons_for_download(cfg) -> list[int]:
@@ -234,14 +340,35 @@ def main() -> int:
 
     # --- Regressão (efeitos fixos + multi-liga + contexto) ---
     r_ini, r_fim = 1, 38
+    ano_cal = max((int(str(j.data)[:4]) for j in jogos if j.data and str(j.data)[:4].isdigit()), default=2026)
     jogos_reg, log_reg = aplicar_projecoes(
-        jogos, "regressao_completa", r_ini, r_fim, "mandante_visitante"
+        jogos,
+        "regressao_completa",
+        r_ini,
+        r_fim,
+        "mandante_visitante",
+        janela="ultimas_38_rodadas",
+        ano_calendario=ano_cal,
     )
     classif_reg = tabela_comparativa_posicoes(jogos, jogos_reg)
     coefs_reg = tabela_regressao_acumulada_resumo(
-        jogos, r_ini, r_fim, "completa"
+        jogos,
+        r_ini,
+        r_fim,
+        "completa",
+        janela="ultimas_38_rodadas",
+        ano_calendario=ano_cal,
     )
-    logger.info("Regressão: %s projeções calculadas", len(log_reg))
+    logger.info("Regressão (38 rod.): %s projeções calculadas", len(log_reg))
+
+    proj_modelos, resumo_modelos = _gerar_modelos_acumulados(
+        jogos, r_ini, r_fim, ano_calendario=ano_cal
+    )
+    logger.info(
+        "Modelos acumulados: %s linhas de projeção, %s resumos",
+        len(proj_modelos),
+        len(resumo_modelos),
+    )
 
     classif_prob = standings if standings is not None else classificacao(jogos_reg)
 
@@ -324,6 +451,7 @@ def main() -> int:
         "fingerprint": bundle.status.dataset_fingerprint,
         "runtime_sec": bundle.status.runtime_sec,
         "context_vars": "dias_descanso + jogos_importantes",
+        "modelos_acumulados": "FE + Kalman + XGBoost + GAM × 3 janelas",
     }
     # Destinos: dados/ (junto ao calendário) + entrega + Downloads
     destinos = [
@@ -346,6 +474,8 @@ def main() -> int:
         coefs_reg=coefs_reg,
         base_contexto=base_contexto,
         match_forecasts=fc_df,
+        proj_modelos=proj_modelos,
+        resumo_modelos=resumo_modelos,
         meta=meta,
     )
     for dest in destinos[1:]:
@@ -384,6 +514,8 @@ def main() -> int:
                     SHEET_PROJ_REG: log_reg,
                     SHEET_COEFS_REG: coefs_reg,
                     SHEET_CLASSIF_REG: classif_reg,
+                    SHEET_PROJ_MODELOS: proj_modelos,
+                    SHEET_RESUMO_MODELOS: resumo_modelos,
                     SHEET_PROJ_PROB: cal_prob,
                     SHEET_FORECASTS: fc_df if fc_df is not None else pd.DataFrame(),
                     SHEET_CLASSIF_PROB: classif_prob,

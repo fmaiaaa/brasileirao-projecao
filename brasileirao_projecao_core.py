@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 
 from recency import (
+    JanelaTreino,
+    anos_janela_tres_anos,
     elastic_net_lstsq,
     filter_jogos_by_round_window,
     load_recency_settings,
@@ -26,6 +28,11 @@ ModoProjecao = Literal[
     "regressao_momento_aceleracao",
     "regressao_momento_historico",
     "regressao_completa",
+    "regressao_completa_2025",
+    "regressao_completa_2025_sem_casa_fap",
+    "kalman_acumulada",
+    "xgboost_acumulada",
+    "gam_acumulada",
     "prob_ml",
 ]
 TipoRegressao = Literal["simples", "mandante_visitante"]
@@ -39,6 +46,8 @@ VarianteRegressaoAcumulada = Literal[
     "momento_historico",
     "completa",
     "completa_limites",
+    "completa_2025",
+    "completa_2025_sem_casa_fap",
 ]
 
 NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
@@ -46,17 +55,101 @@ NOME_REGRESSAO_ACUMULADA: dict[VarianteRegressaoAcumulada, str] = {
     "momento_historico": "Regressão de Momento e Histórico (efeitos fixos)",
     "completa": "Regressão",
     "completa_limites": "Regressão (Centrada)",
+    "completa_2025": "Regressão (treino só 2025)",
+    "completa_2025_sem_casa_fap": "Regressão (treino só 2025, sem casa/FAP)",
 }
 
 MODO_PARA_VARIANTE: dict[str, VarianteRegressaoAcumulada] = {
     "regressao_momento_aceleracao": "momento_aceleracao",
     "regressao_momento_historico": "momento_historico",
     "regressao_completa": "completa",
+    "regressao_completa_2025": "completa_2025",
+    "regressao_completa_2025_sem_casa_fap": "completa_2025_sem_casa_fap",
 }
 
 
+def _filtro_ano_regressao(variante: VarianteRegressaoAcumulada) -> int | None:
+    if variante in ("completa_2025", "completa_2025_sem_casa_fap"):
+        return 2025
+    return None
+
+
+def regressao_usa_base_semanal(
+    modo: ModoProjecao, janela: JanelaTreino | None = None
+) -> bool:
+    """Só regressão completa + 38 rodadas usa o XLSX semanal pré-calculado."""
+    return modo == "regressao_completa" and (
+        janela is None or janela == "ultimas_38_rodadas"
+    )
+
+
+def preparar_blocos_treino_janela(
+    jogos_calendario: list[Jogo],
+    janela: JanelaTreino,
+    *,
+    blocos_extra: list[list[Jogo]] | None = None,
+    ano_calendario: int = 2026,
+) -> list[list[Jogo]]:
+    """Blocos de jogos para treino conforme janela temporal."""
+    try:
+        from brasileirao_multi_liga import remap_block_teams
+    except Exception:
+        remap_block_teams = None  # type: ignore
+
+    cal_set = set(times_do_calendario(jogos_calendario))
+    rcfg = load_recency_settings()
+    blocos: list[list[Jogo]] = []
+
+    if janela == "2025":
+        j25 = _carregar_jogos_treino_ano(2025, cal_set)
+        if j25:
+            blocos.append(j25)
+    elif janela == "ultimos_3_anos":
+        for ano in anos_janela_tres_anos(ano_calendario, n_anos=3):
+            jb = _carregar_jogos_treino_ano(ano, cal_set)
+            if jb:
+                blocos.append(jb)
+    else:
+        cal_played = [j for j in jogos_calendario if j.jogado]
+        cal_f = filter_jogos_by_round_window(
+            cal_played, n_rounds=int(rcfg["history_rounds"])
+        )
+        if cal_f:
+            blocos.append(cal_f)
+        if blocos_extra:
+            for bloco in blocos_extra:
+                if not bloco:
+                    continue
+                raw = remap_block_teams(bloco, cal_set) if remap_block_teams else bloco
+                bf = filter_jogos_by_round_window(
+                    raw, n_rounds=int(rcfg["history_rounds"])
+                )
+                if bf:
+                    blocos.append(bf)
+    return blocos
+
+
+def modo_e_modelo_acumulado(modo: ModoProjecao) -> bool:
+    return modo in ("kalman_acumulada", "xgboost_acumulada", "gam_acumulada")
+
+
 def modo_e_regressao_acumulada(modo: ModoProjecao) -> bool:
-    return modo in MODO_PARA_VARIANTE
+    return modo in MODO_PARA_VARIANTE or modo_e_modelo_acumulado(modo)
+
+
+def _carregar_jogos_treino_ano(ano: int, calendar_teams: set[str]) -> list[Jogo]:
+    """Série A de ``ano`` (Base_Contexto) com nomes alinhados ao calendário."""
+    try:
+        from brasileirao_multi_liga import remap_block_teams
+        from brasileirao_weekly_base import jogos_serie_a_ano
+
+        jogos = jogos_serie_a_ano(ano)
+        if jogos and calendar_teams:
+            return remap_block_teams(jogos, calendar_teams)
+        return jogos
+    except Exception:
+        return []
+
 
 FORMA_RECENTE_JOGOS = 5
 RODADA_FIM_PRIMEIRO_TURNO = 19
@@ -735,6 +828,21 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
             "Semi",
             "Final",
         ]
+    if variante == "completa_2025_sem_casa_fap":
+        return [
+            "Intercepto",
+            "Rodada",
+            "Rodada ao Quadrado",
+            "Interação Rodada × Time",
+            "Interação Rodada ao Quadrado × Time",
+            "Forma Recente",
+            "Dias de Descanso",
+            "Classificatórias",
+            "Oitavas",
+            "Quartas",
+            "Semi",
+            "Final",
+        ]
     return [
         "Intercepto",
         "Rodada",
@@ -796,6 +904,21 @@ def _flags_regressao_acumulada(variante: VarianteRegressaoAcumulada) -> dict[str
             "usa_descanso": True,
             "usa_importante": True,
             "usa_rodada_centrada": True,
+            "limita_delta_rodada": True,
+            "forma_decaindo": True,
+        }
+    if variante == "completa_2025_sem_casa_fap":
+        return {
+            "usa_rodada": True,
+            "usa_rodada2": True,
+            "usa_interacao_rodada": True,
+            "usa_interacao_rodada2": True,
+            "usa_forma": True,
+            "usa_prop_casa": False,
+            "usa_forca": False,
+            "usa_descanso": True,
+            "usa_importante": True,
+            "usa_rodada_centrada": False,
             "limita_delta_rodada": True,
             "forma_decaindo": True,
         }
@@ -1224,6 +1347,8 @@ def ajustar_painel_efeitos_fixos(
     *,
     metrica: str | None = None,
     blocos_extra: list[list[Jogo]] | None = None,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
 ) -> dict:
     """
     Painel FE por variante:
@@ -1238,14 +1363,82 @@ def ajustar_painel_efeitos_fixos(
     regressão — modos média e repetir 1º turno não usam isso.
     """
     flags = _flags_regressao_acumulada(variante)
-    fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
     times_alvo = times_do_calendario(jogos)
     cal_set = set(times_alvo)
     rcfg = load_recency_settings()
+    filtro_ano = _filtro_ano_regressao(variante) if janela is None else None
+    effective_janela = janela
+    if effective_janela is None and filtro_ano is not None:
+        effective_janela = "2025"
 
-    times_obs, r, y, prop, forca, forma, descanso, importante, datas_obs = _coletar_painel_efeitos_fixos(
-        jogos, r_ini, r_fim, fm, metrica=metrica
-    )
+    if effective_janela is not None:
+        blocos_treino = preparar_blocos_treino_janela(
+            jogos,
+            effective_janela,
+            blocos_extra=blocos_extra,
+            ano_calendario=ano_calendario,
+        )
+        times_obs_l: list[str] = []
+        r_l: list[float] = []
+        y_l: list[float] = []
+        prop_l: list[float] = []
+        forca_l: list[float] = []
+        forma_l: list[float] = []
+        descanso_l: list[float] = []
+        importante_l: list[str] = []
+        datas_l: list[str] = []
+        for bloco in blocos_treino:
+            if not bloco:
+                continue
+            r0 = min(j.r for j in bloco)
+            r1 = max(j.r for j in bloco)
+            fm_b = mapa_forca_adversario(bloco, r0, r1)
+            t_b, r_b, y_b, p_b, f_b, fr_b, d_b, i_b, dt_b = _coletar_painel_efeitos_fixos(
+                bloco, r0, r1, fm_b, metrica=metrica
+            )
+            times_obs_l.extend(t_b)
+            r_l.extend(r_b.tolist())
+            y_l.extend(y_b.tolist())
+            prop_l.extend(p_b.tolist())
+            forca_l.extend(f_b.tolist())
+            forma_l.extend(fr_b.tolist())
+            descanso_l.extend(d_b.tolist())
+            importante_l.extend(i_b)
+            datas_l.extend(dt_b)
+        times_obs = times_obs_l
+        r = np.array(r_l, dtype=float)
+        y = np.array(y_l, dtype=float)
+        prop = np.array(prop_l, dtype=float)
+        forca = np.array(forca_l, dtype=float)
+        forma = np.array(forma_l, dtype=float)
+        descanso = np.array(descanso_l, dtype=float)
+        importante = importante_l
+        datas_obs = datas_l
+        blocos_extra = []
+    elif filtro_ano is not None:
+        jogos_treino = _carregar_jogos_treino_ano(filtro_ano, cal_set)
+        if jogos_treino:
+            r_treino_ini = min(j.r for j in jogos_treino)
+            r_treino_fim = max(j.r for j in jogos_treino)
+            fm = mapa_forca_adversario(jogos_treino, r_treino_ini, r_treino_fim)
+            times_obs, r, y, prop, forca, forma, descanso, importante, datas_obs = (
+                _coletar_painel_efeitos_fixos(
+                    jogos_treino, r_treino_ini, r_treino_fim, fm, metrica=metrica
+                )
+            )
+            blocos_extra = []
+        else:
+            fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
+            times_obs, r, y, prop, forca, forma, descanso, importante, datas_obs = (
+                _coletar_painel_efeitos_fixos(jogos, r_ini, r_fim, fm, metrica=metrica)
+            )
+    else:
+        fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
+        times_obs, r, y, prop, forca, forma, descanso, importante, datas_obs = (
+            _coletar_painel_efeitos_fixos(jogos, r_ini, r_fim, fm, metrica=metrica)
+        )
+    if effective_janela is not None or filtro_ano is not None:
+        blocos_extra = []
     times_obs_l = list(times_obs)
     r_l = list(r.tolist()) if hasattr(r, "tolist") else list(r)
     y_l = list(y.tolist()) if hasattr(y, "tolist") else list(y)
@@ -2075,6 +2268,8 @@ def aplicar_projecoes_acumulada(
     variante: VarianteRegressaoAcumulada,
     *,
     blocos_extra: list[list[Jogo]] | None = None,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
 ) -> tuple[list[Jogo], pd.DataFrame]:
     """Projeta rodada a rodada; força dos oponentes atualizada após cada rodada."""
     jogos = [Jogo(**j.__dict__) for j in jogos]
@@ -2090,7 +2285,14 @@ def aplicar_projecoes_acumulada(
         except Exception:
             blocos_extra = []
     painel = ajustar_painel_efeitos_fixos(
-        jogos, r_ini, r_fim, variante, forca_map, blocos_extra=blocos_extra
+        jogos,
+        r_ini,
+        r_fim,
+        variante,
+        forca_map,
+        blocos_extra=blocos_extra,
+        janela=janela,
+        ano_calendario=ano_calendario,
     )
     betas = coeficientes_efeitos_fixos_por_time(painel)
     acum_cache: dict[str, dict[int, float]] = {t: {0: 0.0} for t in times}
@@ -2240,10 +2442,34 @@ def aplicar_projecoes(
     tipo_reg: TipoRegressao,
     *,
     variante_reg: VarianteRegressao = "interacao",
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
 ) -> tuple[list[Jogo], pd.DataFrame]:
-    if modo_e_regressao_acumulada(modo):
+    if modo_e_modelo_acumulado(modo):
+        from modelos_acumulados import aplicar_projecoes_modelo_acumulado
+
+        tipo_map = {
+            "kalman_acumulada": "kalman",
+            "xgboost_acumulada": "xgboost",
+            "gam_acumulada": "gam",
+        }
+        janela_use: JanelaTreino = janela or "ultimas_38_rodadas"
+        return aplicar_projecoes_modelo_acumulado(
+            jogos,
+            tipo_map[modo],  # type: ignore[arg-type]
+            janela_use,
+            r_ini,
+            r_fim,
+            ano_calendario=ano_calendario,
+        )
+    if modo in MODO_PARA_VARIANTE:
         return aplicar_projecoes_acumulada(
-            jogos, r_ini, r_fim, MODO_PARA_VARIANTE[modo]
+            jogos,
+            r_ini,
+            r_fim,
+            MODO_PARA_VARIANTE[modo],
+            janela=janela,
+            ano_calendario=ano_calendario,
         )
     if modo == "media_simples":
         return aplicar_projecoes_media(jogos, r_ini, r_fim, usar_forma=True)
@@ -2372,6 +2598,8 @@ def tabela_regressao_acumulada_resumo(
     variante: VarianteRegressaoAcumulada,
     *,
     blocos_extra: list[list[Jogo]] | None = None,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
 ) -> pd.DataFrame:
     """R² e significância dos termos da regressão FE de pts acumulados."""
     forca_map = mapa_forca_adversario(jogos, r_ini, r_fim)
@@ -2386,7 +2614,14 @@ def tabela_regressao_acumulada_resumo(
         except Exception:
             blocos_extra = []
     painel = ajustar_painel_efeitos_fixos(
-        jogos, r_ini, r_fim, variante, forca_map, blocos_extra=blocos_extra
+        jogos,
+        r_ini,
+        r_fim,
+        variante,
+        forca_map,
+        blocos_extra=blocos_extra,
+        janela=janela,
+        ano_calendario=ano_calendario,
     )
     por_time = coeficientes_efeitos_fixos_por_time(painel)
     rows: list[dict] = []
