@@ -78,6 +78,14 @@ MODELOS_DRIVE_FILE_ID=id_do_arquivo_no_drive
 python scripts/weekly_retrain.py --budget fast --skip-download --no-backtest
 ```
 
+6. **Agendamento Windows (segundas 03:00)** — uma vez:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup_weekly_scheduler.ps1
+```
+
+Isso cria a tarefa `BrasileiraoProbMLWeeklyRetrain`, junction sem acentos em `%LOCALAPPDATA%\brasileirao-retrain\repo` e roda `weekly_retrain.py --budget fast --no-backtest` (backtest completo só manualmente, para não travar horas).
+
 No log deve aparecer `Sheets publicada: … abas`. Depois disso, não precisa mais copiar XLSX para o Drive manualmente.
 
 ### Alternativa: pasta do Google Drive for Desktop
@@ -115,7 +123,10 @@ Aba de resultados (você atualiza): **`Jogos`**.
 | Probabilístico | `Projecoes_Prob` / `Match_Forecasts` / `Classif_Prob_MC` |
 
 ```bash
-# Segunda 03:00: gera brasileirao_modelos.xlsx
+# Segunda 03:00 (agendador): fast + sem backtest OOF
+python scripts/weekly_retrain.py --budget fast --no-backtest
+
+# Retreino completo manual (com backtest, demora bem mais)
 python scripts/weekly_retrain.py --budget fast
 ```
 

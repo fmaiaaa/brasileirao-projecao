@@ -1,5 +1,4 @@
 @echo off
-REM Segunda 03:00 — FPT + overlay Sheets + regressão + probabilístico + XLSX entrega
+REM Segunda 03:00 — use scripts\setup_weekly_scheduler.ps1 para registrar no Windows
 cd /d "%~dp0\.."
-set PYTHONUNBUFFERED=1
-"C:\Users\kaleb\AppData\Local\Programs\Python\Python313\python.exe" scripts\weekly_retrain.py --budget fast >> artifacts\prob_ml\weekly_retrain.log 2>&1
+call scripts\run_weekly_retrain_scheduled.bat
