@@ -15,6 +15,13 @@ from prob_ml.models.score_matrix import (
 )
 
 
+def _match_weights(matches: pd.DataFrame, idx: pd.Index | np.ndarray | slice) -> np.ndarray:
+    sub = matches.loc[idx]
+    if "sample_weight" in sub.columns:
+        return sub["sample_weight"].fillna(1.0).to_numpy(dtype=float)
+    return np.ones(len(sub), dtype=float)
+
+
 class LeagueMeanModel(ScoreModel):
     name = "league_mean"
 
@@ -26,8 +33,9 @@ class LeagueMeanModel(ScoreModel):
     def fit(self, matches: pd.DataFrame, features: pd.DataFrame | None = None) -> "LeagueMeanModel":
         played = matches.dropna(subset=["home_goals", "away_goals"])
         if len(played):
-            self.lam_h = float(played["home_goals"].mean())
-            self.lam_a = float(played["away_goals"].mean())
+            w = _match_weights(matches, played.index)
+            self.lam_h = float(np.average(played["home_goals"], weights=w))
+            self.lam_a = float(np.average(played["away_goals"], weights=w))
         return self
 
     def predict_match(self, row, features_row=None) -> ScoreDistribution:
@@ -53,21 +61,26 @@ class IndependentPoissonAD(ScoreModel):
         self.defense = {t: 1.0 for t in teams}
         if played.empty:
             return self
-        self.mu = float((played["home_goals"].mean() + played["away_goals"].mean()) / 2)
+        w_all = _match_weights(matches, played.index)
+        self.mu = float(
+            np.average(
+                (played["home_goals"] + played["away_goals"]) / 2,
+                weights=w_all,
+            )
+        )
 
-        # Iteração tipo Maher
         for _ in range(40):
             gf = defaultdict(float)
             ga = defaultdict(float)
             n = defaultdict(float)
-            for _, r in played.iterrows():
+            for (_, r), w in zip(played.iterrows(), w_all):
                 h, a = r["home_team"], r["away_team"]
-                gf[h] += float(r["home_goals"])
-                ga[h] += float(r["away_goals"])
-                gf[a] += float(r["away_goals"])
-                ga[a] += float(r["home_goals"])
-                n[h] += 1
-                n[a] += 1
+                gf[h] += float(r["home_goals"]) * w
+                ga[h] += float(r["away_goals"]) * w
+                gf[a] += float(r["away_goals"]) * w
+                ga[a] += float(r["home_goals"]) * w
+                n[h] += w
+                n[a] += w
             for t in teams:
                 opp_def = np.mean([self.defense[x] for x in teams if x != t]) or 1.0
                 opp_att = np.mean([self.attack[x] for x in teams if x != t]) or 1.0
@@ -104,17 +117,17 @@ class DixonColesModel(IndependentPoissonAD):
 
     def fit(self, matches: pd.DataFrame, features: pd.DataFrame | None = None) -> "DixonColesModel":
         super().fit(matches, features)
-        # estima rho simples via NLL em grade
         played = matches.dropna(subset=["home_goals", "away_goals"])
+        w_all = _match_weights(matches, played.index)
         best_rho, best_nll = self.rho, 1e18
         for rho in np.linspace(-0.2, 0.1, 13):
             nll = 0.0
-            for _, r in played.iterrows():
+            for (_, r), w in zip(played.iterrows(), w_all):
                 lh, la = self._lams(str(r["home_team"]), str(r["away_team"]))
                 dist = dixon_coles_matrix(lh, la, rho=float(rho), max_goals=self.max_goals)
                 i = min(int(r["home_goals"]), self.max_goals)
                 j = min(int(r["away_goals"]), self.max_goals)
-                nll -= np.log(max(dist.probs[i, j], 1e-12))
+                nll -= w * np.log(max(dist.probs[i, j], 1e-12))
             if nll < best_nll:
                 best_nll, best_rho = nll, float(rho)
         self.rho = best_rho
@@ -143,8 +156,9 @@ class EloScoreModel(ScoreModel):
         self.ratings = dict(state.ratings)
         played = matches.dropna(subset=["home_goals", "away_goals"])
         if len(played):
-            self.league_home = float(played["home_goals"].mean())
-            self.league_away = float(played["away_goals"].mean())
+            w = _match_weights(matches, played.index)
+            self.league_home = float(np.average(played["home_goals"], weights=w))
+            self.league_away = float(np.average(played["away_goals"], weights=w))
         self._pre = out
         return self
 
@@ -215,12 +229,13 @@ class PoissonGLMModel(ScoreModel):
         X = features.loc[played, self.feature_cols].fillna(0.0).to_numpy()
         yh = matches.loc[played, "home_goals"].to_numpy(dtype=float)
         ya = matches.loc[played, "away_goals"].to_numpy(dtype=float)
+        sw = _match_weights(matches, matches.index[played])
         if len(yh) < 20:
             return self
         self.model_h = PoissonRegressor(alpha=self.alpha, max_iter=300)
         self.model_a = PoissonRegressor(alpha=self.alpha, max_iter=300)
-        self.model_h.fit(X, yh)
-        self.model_a.fit(X, ya)
+        self.model_h.fit(X, yh, sample_weight=sw)
+        self.model_a.fit(X, ya, sample_weight=sw)
         return self
 
     def predict_match(self, row, features_row=None) -> ScoreDistribution:
@@ -280,6 +295,7 @@ class ElasticNetGoalsModel(ScoreModel):
         X = features.loc[played, self.feature_cols].fillna(0.0)
         yh = matches.loc[played, "home_goals"].astype(float)
         ya = matches.loc[played, "away_goals"].astype(float)
+        sw = _match_weights(matches, matches.index[played])
         self.model_h = Pipeline(
             [
                 ("sc", StandardScaler()),
@@ -292,8 +308,8 @@ class ElasticNetGoalsModel(ScoreModel):
                 ("en", ElasticNet(alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=4000)),
             ]
         )
-        self.model_h.fit(X, yh)
-        self.model_a.fit(X, ya)
+        self.model_h.fit(X, yh, en__sample_weight=sw)
+        self.model_a.fit(X, ya, en__sample_weight=sw)
         return self
 
     def predict_match(self, row, features_row=None) -> ScoreDistribution:

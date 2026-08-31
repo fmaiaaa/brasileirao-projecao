@@ -72,7 +72,14 @@ from prob_ml.simulation import result_to_frame, simulate_season  # noqa: E402
 from brasileirao_projecao_core import Jogo  # noqa: E402
 
 logger = logging.getLogger("weekly_retrain")
-SEASONS = [2021, 2022, 2023, 2024, 2025, 2026]
+
+
+def _seasons_for_download(cfg) -> list[int]:
+    from datetime import date
+    from recency import allowed_seasons, load_recency_settings
+
+    rcfg = load_recency_settings(cfg)
+    return sorted(allowed_seasons(ref=date.today(), years=int(rcfg["history_years"])))
 
 
 def _load_calendar() -> tuple[list[Jogo], str]:
@@ -105,11 +112,12 @@ def main() -> int:
         if not api_key:
             logger.error("FPT_API_KEY ausente (.env). Abortando download.")
             return 2
+        seasons = _seasons_for_download(cfg)
         download_fpt_multi(
             api_key,
             local_csv,
             leagues=leagues_from_config(cfg),
-            seasons=SEASONS,
+            seasons=seasons,
         )
         try:
             download_fpt_cups(api_key)

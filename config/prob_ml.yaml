@@ -20,6 +20,9 @@ tail_mass_floor: 1.0e-12
 data:
   source: local  # após compartilhar com streamlit-bot@..., use: google_drive
   local_path: dados/fpt_matches.csv
+  # Histórico: só ano atual + 2 anteriores; peso decai por dias desde a partida
+  max_history_years: 3
+  decay_half_life_days: 120
   # Campeonatos FPT usados no treino de regressão e probabilístico.
   # Médias e repetir 1º turno usam SOMENTE o calendário do Brasileirão.
   fpt_leagues:

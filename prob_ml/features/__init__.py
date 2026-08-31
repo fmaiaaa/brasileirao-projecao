@@ -281,8 +281,9 @@ def assert_no_future_leakage(
         }
     ]
     past = base.index < mutate_from_idx
-    a = base.loc[past, feat_cols].fillna(-999).to_numpy()
-    b = changed.loc[past, feat_cols].fillna(-999).to_numpy()
+    numeric_cols = [c for c in feat_cols if pd.api.types.is_numeric_dtype(base[c])]
+    a = base.loc[past, numeric_cols].fillna(-999).to_numpy(dtype=float)
+    b = changed.loc[past, numeric_cols].fillna(-999).to_numpy(dtype=float)
     if not np.allclose(a, b, equal_nan=True):
         diff = np.abs(a - b)
         raise AssertionError(

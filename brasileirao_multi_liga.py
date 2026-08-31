@@ -16,6 +16,7 @@ import pandas as pd
 from brasileirao_projecao_core import Jogo
 from prob_ml.config import load_config
 from prob_ml.data import LocalFileDataSource
+from recency import filter_matches_dataframe, load_recency_settings
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +94,18 @@ def matches_df_to_jogo_blocks(
     matches: pd.DataFrame,
     *,
     exclude_serie_a_season: int | None = 2026,
+    cfg: dict | None = None,
 ) -> list[list[Jogo]]:
     """
     Cada bloco = uma temporada de um campeonato (força/forma calculadas dentro do bloco).
     Exclui Série A da temporada atual (já coberta pelo calendário do app).
     """
-    df = matches.copy()
+    rcfg = load_recency_settings(cfg)
+    df = filter_matches_dataframe(
+        matches,
+        years=int(rcfg["history_years"]),
+    )
+    df = df.copy()
     if "home_goals" not in df.columns:
         raise ValueError("matches sem home_goals")
     played = df["home_goals"].notna() & df["away_goals"].notna()
@@ -167,7 +174,9 @@ def carregar_blocos_treino_regressao(
         return []
     matches, _ = LocalFileDataSource(path).load_canonical()
     return matches_df_to_jogo_blocks(
-        matches, exclude_serie_a_season=exclude_serie_a_season
+        matches,
+        exclude_serie_a_season=exclude_serie_a_season,
+        cfg=cfg,
     )
 
 

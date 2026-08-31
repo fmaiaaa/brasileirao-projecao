@@ -9,6 +9,14 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from recency import (
+    filter_jogos_by_recency,
+    load_recency_settings,
+    weighted_mean,
+    weights_for_match_dates,
+    wls_lstsq,
+)
+
 ModoProjecao = Literal[
     "media_simples",
     "media_casa_fora",
@@ -386,13 +394,14 @@ def _coletar_obs_regressao(
     time: str,
     r_ini: int,
     r_fim: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str], np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str], np.ndarray, list[str]]:
     rodadas: list[float] = []
     casa: list[float] = []
     turno: list[float] = []
     y_vals: list[float] = []
     adversarios: list[str] = []
     formas: list[float] = []
+    datas: list[str] = []
 
     jogos_time = [
         j
@@ -409,6 +418,7 @@ def _coletar_obs_regressao(
             continue
         gm, gv = parsed
         formas.append(forma_recente_ate(jogos, time, j.r, j.hora))
+        datas.append(j.data or "")
         if j.mand == time:
             rodadas.append(float(j.r))
             casa.append(1.0)
@@ -429,6 +439,7 @@ def _coletar_obs_regressao(
         np.array(y_vals, dtype=float),
         adversarios,
         np.array(formas, dtype=float),
+        datas,
     )
 
 
@@ -441,6 +452,7 @@ def _ajustar_regressao(
     forca_map: dict[str, float],
     variante: VarianteRegressao,
     forma: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Ajusta OLS conforme a variante selecionada."""
     usa_interacao = variante != "casa_sem_interacao"
@@ -532,7 +544,7 @@ def _ajustar_regressao(
         if n < len(cols):
             continue
         X = np.column_stack(cols)
-        coef, _, _, _ = np.linalg.lstsq(X, y.astype(float), rcond=None)
+        coef = wls_lstsq(X, y.astype(float), weights)
         pvals = _ols_pvalues(X, y.astype(float), coef)
         nomes = _nomes_termos_regressao(
             interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag
@@ -646,11 +658,14 @@ def regressao_beta(
     forca_map: dict[str, float],
 ) -> dict[str, float]:
     """Coeficientes de regressão por jogo conforme variante."""
-    rodadas, casa, turno, y, adversarios, formas = _coletar_obs_regressao(
-        jogos, time, r_ini, r_fim
+    rcfg = load_recency_settings()
+    jogos_use = filter_jogos_by_recency(jogos, years=int(rcfg["history_years"]))
+    rodadas, casa, turno, y, adversarios, formas, datas = _coletar_obs_regressao(
+        jogos_use, time, r_ini, r_fim
     )
+    obs_w = weights_for_match_dates(datas, half_life_days=float(rcfg["half_life_days"]))
     coefs = _ajustar_regressao(
-        rodadas, casa, turno, y, adversarios, forca_map, variante, formas
+        rodadas, casa, turno, y, adversarios, forca_map, variante, formas, obs_w
     )
     if variante == "interacao_adv_turno":
         coefs["forma_recente"] = forma_recente_atual(jogos, time)
@@ -1108,6 +1123,8 @@ def _coletar_painel_efeitos_fixos(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    np.ndarray,
+    list[str],
     list[str],
 ]:
     """Painel time×rodada: Y=PA + R, PC, FAP, FR, descanso, jogos importantes."""
@@ -1124,6 +1141,7 @@ def _coletar_painel_efeitos_fixos(
     formas: list[float] = []
     descansos: list[float] = []
     importantes: list[str] = []
+    datas: list[str] = []
 
     for time in times_do_calendario(jogos):
         for r in range(r_ini, r_fim + 1):
@@ -1156,6 +1174,7 @@ def _coletar_painel_efeitos_fixos(
                 d, imp = 7.0, "Não tem"
             descansos.append(float(d))
             importantes.append(str(imp))
+            datas.append(jogo_r.data or "")
 
     return (
         times_obs,
@@ -1166,6 +1185,7 @@ def _coletar_painel_efeitos_fixos(
         np.array(formas, dtype=float),
         np.array(descansos, dtype=float),
         importantes,
+        datas,
     )
 
 
@@ -1195,8 +1215,9 @@ def ajustar_painel_efeitos_fixos(
     fm = forca_map or mapa_forca_adversario(jogos, r_ini, r_fim)
     times_alvo = times_do_calendario(jogos)
     cal_set = set(times_alvo)
+    rcfg = load_recency_settings()
 
-    times_obs, r, y, prop, forca, forma, descanso, importante = _coletar_painel_efeitos_fixos(
+    times_obs, r, y, prop, forca, forma, descanso, importante, datas_obs = _coletar_painel_efeitos_fixos(
         jogos, r_ini, r_fim, fm, metrica=metrica
     )
     times_obs_l = list(times_obs)
@@ -1207,6 +1228,7 @@ def ajustar_painel_efeitos_fixos(
     forma_l = list(forma.tolist()) if hasattr(forma, "tolist") else list(forma)
     descanso_l = list(descanso.tolist()) if hasattr(descanso, "tolist") else list(descanso)
     importante_l = list(importante)
+    datas_l = list(datas_obs)
 
     if blocos_extra:
         try:
@@ -1216,13 +1238,19 @@ def ajustar_painel_efeitos_fixos(
         for bloco in blocos_extra:
             if not bloco:
                 continue
-            bloco_use = (
+            bloco_raw = (
                 remap_block_teams(bloco, cal_set) if remap_block_teams else bloco
             )
+            bloco_use = filter_jogos_by_recency(
+                bloco_raw,
+                years=int(rcfg["history_years"]),
+            )
+            if not bloco_use:
+                continue
             r0 = min(j.r for j in bloco_use)
             r1 = max(j.r for j in bloco_use)
             fm_b = mapa_forca_adversario(bloco_use, r0, r1)
-            t_b, r_b, y_b, p_b, f_b, fr_b, d_b, i_b = _coletar_painel_efeitos_fixos(
+            t_b, r_b, y_b, p_b, f_b, fr_b, d_b, i_b, dt_b = _coletar_painel_efeitos_fixos(
                 bloco_use, r0, r1, fm_b, metrica=metrica
             )
             times_obs_l.extend(t_b)
@@ -1233,6 +1261,7 @@ def ajustar_painel_efeitos_fixos(
             forma_l.extend(fr_b.tolist())
             descanso_l.extend(d_b.tolist())
             importante_l.extend(i_b)
+            datas_l.extend(dt_b)
 
     times_obs = times_obs_l
     r = np.array(r_l, dtype=float)
@@ -1242,6 +1271,7 @@ def ajustar_painel_efeitos_fixos(
     forma = np.array(forma_l, dtype=float)
     descanso = np.array(descanso_l, dtype=float)
     importante = importante_l
+    obs_w = weights_for_match_dates(datas_l, half_life_days=float(rcfg["half_life_days"]))
 
     # FE: times do calendário + quaisquer times extras que apareceram no painel
     times = list(times_alvo)
@@ -1403,7 +1433,7 @@ def ajustar_painel_efeitos_fixos(
         usa_int_r = False
         usa_int_r2 = False
 
-    coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+    coef = wls_lstsq(X, y, obs_w)
     pvals = _ols_pvalues(X, y, coef)
     r2_fit = _ols_r2(X, y, coef)
 
@@ -1836,33 +1866,51 @@ def media_pts_jogo(
     tipo: TipoRegressao,
 ) -> dict[str, float]:
     """
-    Média de pontos por jogo (≈ por rodada) no intervalo [r_ini, r_fim].
-    mandante_visitante: médias separadas em casa e fora.
+    Média ponderada de pontos por jogo no intervalo [r_ini, r_fim].
+    Pesos decaem exponencialmente conforme a data da partida (recência).
     """
-    pts_total = pts_casa = pts_fora = 0
-    n_total = n_casa = n_fora = 0
+    rcfg = load_recency_settings()
+    jogos_use = filter_jogos_by_recency(jogos, years=int(rcfg["history_years"]))
+    pts_total: list[float] = []
+    w_total: list[float] = []
+    pts_casa: list[float] = []
+    w_casa: list[float] = []
+    pts_fora: list[float] = []
+    w_fora: list[float] = []
 
-    for j in jogos:
+    for j in jogos_use:
         if not j.jogado or j.r < r_ini or j.r > r_fim:
             continue
         pm, pv = j.pts_reais()
+        if pm is None or pv is None:
+            continue
+        w = float(
+            weights_for_match_dates(
+                [j.data or ""],
+                half_life_days=float(rcfg["half_life_days"]),
+            )[0]
+        )
         if j.mand == time:
-            pts_total += pm
-            pts_casa += pm
-            n_total += 1
-            n_casa += 1
+            pts_total.append(float(pm))
+            w_total.append(w)
+            pts_casa.append(float(pm))
+            w_casa.append(w)
         elif j.vis == time:
-            pts_total += pv
-            pts_fora += pv
-            n_total += 1
-            n_fora += 1
+            pts_total.append(float(pv))
+            w_total.append(w)
+            pts_fora.append(float(pv))
+            w_fora.append(w)
 
-    media_geral = pts_total / n_total if n_total else 1.0
+    media_geral = weighted_mean(np.array(pts_total), np.array(w_total)) if w_total else 1.0
     if tipo == "simples":
         return {"geral": max(media_geral, 0.0)}
 
-    media_casa = pts_casa / n_casa if n_casa else media_geral
-    media_fora = pts_fora / n_fora if n_fora else media_geral
+    media_casa = (
+        weighted_mean(np.array(pts_casa), np.array(w_casa)) if w_casa else media_geral
+    )
+    media_fora = (
+        weighted_mean(np.array(pts_fora), np.array(w_fora)) if w_fora else media_geral
+    )
     return {
         "geral": max(media_geral, 0.0),
         "casa": max(media_casa, 0.0),

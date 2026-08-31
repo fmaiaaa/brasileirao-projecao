@@ -15,6 +15,7 @@ from prob_ml.data import (
     matches_from_calendar_jogos,
 )
 from prob_ml.pipeline import FittedBundle, train_pipeline
+from recency import attach_sample_weights, filter_matches_dataframe, load_recency_settings
 
 logger = logging.getLogger(__name__)
 _ROOT = Path(__file__).resolve().parent.parent
@@ -98,6 +99,23 @@ def load_matches_for_training(
 
         matches, ov = overlay_fpt_with_calendar(matches, jogos)
         report["calendar_overlay"] = ov
+
+    rcfg = load_recency_settings(cfg)
+    n_before = len(matches)
+    matches = filter_matches_dataframe(
+        matches,
+        years=int(rcfg["history_years"]),
+    )
+    matches = attach_sample_weights(
+        matches,
+        half_life_days=float(rcfg["half_life_days"]),
+    )
+    report["recency_filter"] = {
+        "history_years": int(rcfg["history_years"]),
+        "half_life_days": float(rcfg["half_life_days"]),
+        "n_before": n_before,
+        "n_after": len(matches),
+    }
 
     return matches, report
 
