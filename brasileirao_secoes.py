@@ -23,6 +23,16 @@ SECAO_LABEL: dict[JanelaTreino, str] = {
     k: JANELA_TREINO_LABELS[k] for k in SECOES_ORDEM  # type: ignore[misc]
 }
 
+# Rótulos curtos para tabela/gráfico (ordem: 2026 | 38 rod | 3 anos | Integral)
+PRAZO_CURTO: dict[JanelaTreino, str] = {
+    "2026": "2026",
+    "ultimas_38_rodadas": "38 rod",
+    "ultimos_3_anos": "3 anos",
+    "base_completa": "Integral",
+}
+
+PRAZO_PIPE_LEGENDA = "2026 | 38 rod | 3 anos | Integral"
+
 MODO_PARA_LABEL: dict[str, str] = {
     "repetir_turno": LABEL_TURNO,
     "media_simples": LABEL_MEDIA,

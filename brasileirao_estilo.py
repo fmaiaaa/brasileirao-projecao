@@ -667,10 +667,11 @@ def bloco_classificacao_time(
     pos_final: int,
     pts_final: float,
     *,
-    prob_campeao: float | None = None,
-    prob_g4: float | None = None,
-    prob_g6: float | None = None,
-    prob_z4: float | None = None,
+    classif_final: str | None = None,
+    prob_campeao: float | str | None = None,
+    prob_g4: float | str | None = None,
+    prob_g6: float | str | None = None,
+    prob_z4: float | str | None = None,
 ) -> None:
     """Nome do time; classificação atual/final; opcionalmente probs de cenário."""
     import streamlit as st
@@ -678,15 +679,22 @@ def bloco_classificacao_time(
     def _fmt_pts(v: float) -> str:
         return f"{v:.1f}" if abs(v - round(v)) > 0.05 else str(int(round(v)))
 
-    def _fmt_pct(v: float) -> str:
+    def _fmt_pct(v: float | str) -> str:
+        if isinstance(v, str):
+            return v
         return f"{100.0 * v:.1f}%"
+
+    if classif_final is not None:
+        txt_final = classif_final
+    else:
+        txt_final = f"{pos_final}º · {_fmt_pts(pts_final)} pts"
 
     html = (
         '<div class="vel-time-evolucao-block">'
         f'<p class="vel-kpi-time-label">{time}</p>'
         '<div class="vel-kpi-row vel-kpi-row--duo">'
         '<div class="vel-kpi"><div class="lbl">Classificação Final</div>'
-        f'<div class="val">{pos_final}º · {_fmt_pts(pts_final)} pts</div></div>'
+        f'<div class="val">{txt_final}</div></div>'
         '<div class="vel-kpi"><div class="lbl">Classificação Atual</div>'
         f'<div class="val">{pos_atual}º · {_fmt_pts(pts_atual)} pts</div></div>'
         "</div>"
