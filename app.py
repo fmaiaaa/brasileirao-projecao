@@ -56,7 +56,8 @@ from brasileirao_weekly_base import (
     load_resumo_modelos_acum,
 )
 from recency import JANELA_TREINO_LABELS, JanelaTreino
-from modelos_acumulados import LABEL_MEDIA, LABEL_PROB, MODO_PARA_LABEL
+from brasileirao_sheet_names import LABEL_MEDIA, LABEL_PROB
+from modelos_acumulados import MODO_PARA_LABEL
 
 _PLOTLY_CONFIG = {
     "displaylogo": False,

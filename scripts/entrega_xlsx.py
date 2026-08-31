@@ -24,43 +24,27 @@ from typing import Any
 
 import pandas as pd
 
-# Nomes canônicos das abas (não renomear no Drive/Sheets)
-SHEET_LEIA_ME = "Leia-me"
-SHEET_PROJ_REG = "Projecoes_Regressao"
-SHEET_COEFS_REG = "Coefs_Regressao"
-SHEET_CLASSIF_REG = "Classif_Regressao"
-SHEET_PROJ_PROB = "Projecoes_Prob"
-SHEET_FORECASTS = "Match_Forecasts"
-SHEET_CLASSIF_PROB = "Classif_Prob_MC"
-SHEET_METRICAS = "Metricas_Prob"
-SHEET_CONTEXTO = "Base_Contexto"
-SHEET_OVERLAY = "Overlay_Calendario"
-SHEET_PROJ_MODELOS = "Projecoes_Modelos_Acum"
-SHEET_RESUMO_MODELOS = "Resumo_Modelos_Acum"
-SHEET_COEFS_MODELOS = "Coefs_Modelos_Acum"
-SHEET_CLASSIF_MODELOS = "Classif_Modelos_Acum"
-SHEET_FORECASTS_MODELOS = "Forecasts_Modelos_Acum"
-
-SHEETS_MODELO = (
-    SHEET_LEIA_ME,
-    SHEET_PROJ_REG,
-    SHEET_COEFS_REG,
-    SHEET_CLASSIF_REG,
-    SHEET_PROJ_MODELOS,
-    SHEET_RESUMO_MODELOS,
-    SHEET_COEFS_MODELOS,
+from brasileirao_sheet_names import (
+    MODELOS_XLSX_NAME,
+    SHEETS_MODELO,
     SHEET_CLASSIF_MODELOS,
-    SHEET_FORECASTS_MODELOS,
-    SHEET_PROJ_PROB,
-    SHEET_FORECASTS,
     SHEET_CLASSIF_PROB,
-    SHEET_METRICAS,
+    SHEET_CLASSIF_REG,
+    SHEET_COEFS_MODELOS,
+    SHEET_COEFS_REG,
     SHEET_CONTEXTO,
+    SHEET_FORECASTS,
+    SHEET_FORECASTS_MODELOS,
+    SHEET_LEIA_ME,
+    SHEET_METRICAS,
     SHEET_OVERLAY,
+    SHEET_PROJ_MODELOS,
+    SHEET_PROJ_PROB,
+    SHEET_PROJ_REG,
+    SHEET_RESUMO_MODELOS,
 )
 
-MODELOS_XLSX_NAME = "brasileirao_modelos.xlsx"
-
+# Re-export para imports legados (scripts.entrega_xlsx)
 
 def build_entrega_xlsx(
     out_path: Path,

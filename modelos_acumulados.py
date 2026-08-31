@@ -18,6 +18,7 @@ from recency import (
     parse_match_date,
     weights_for_panel_rounds,
 )
+from brasileirao_sheet_names import LABEL_MEDIA, LABEL_PROB
 
 TipoModeloAcumulado = Literal["kalman", "xgboost", "gam"]
 
@@ -54,8 +55,7 @@ MODO_PARA_LABEL: dict[str, str] = {
     "prob_ml": "Probabilístico",
 }
 
-LABEL_MEDIA = "Média"
-LABEL_PROB = "Probabilístico"
+# Alias legado — preferir brasileirao_sheet_names
 
 
 @dataclass

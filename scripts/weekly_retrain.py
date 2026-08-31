@@ -265,7 +265,7 @@ def _gerar_media_prob_janelas(
         jogos_treino_por_janela,
         stats_acumuladas_ate,
     )
-    from modelos_acumulados import LABEL_MEDIA, LABEL_PROB
+    from brasileirao_sheet_names import LABEL_MEDIA, LABEL_PROB
     from prob_ml.config import budget_n_sims
     from prob_ml.context_calendar import context_for_team
     from prob_ml.offline import forecast_calendar_games

@@ -25,41 +25,25 @@ _ROOT = Path(__file__).resolve().parent
 _DADOS = _ROOT / "dados"
 _ENTREGA = _ROOT / "artifacts" / "entrega"
 
-# Importa nomes canônicos (scripts/ no path via sys.path do app = root)
-try:
-    from scripts.entrega_xlsx import (  # type: ignore
-        MODELOS_XLSX_NAME,
-        SHEET_CLASSIF_MODELOS,
-        SHEET_CLASSIF_PROB,
-        SHEET_CLASSIF_REG,
-        SHEET_COEFS_MODELOS,
-        SHEET_COEFS_REG,
-        SHEET_CONTEXTO,
-        SHEET_FORECASTS,
-        SHEET_FORECASTS_MODELOS,
-        SHEET_LEIA_ME,
-        SHEET_METRICAS,
-        SHEET_PROJ_MODELOS,
-        SHEET_PROJ_PROB,
-        SHEET_PROJ_REG,
-        SHEET_RESUMO_MODELOS,
-    )
-except Exception:  # pragma: no cover
-    MODELOS_XLSX_NAME = "brasileirao_modelos.xlsx"
-    SHEET_LEIA_ME = "Leia-me"
-    SHEET_PROJ_REG = "Projecoes_Regressao"
-    SHEET_COEFS_REG = "Coefs_Regressao"
-    SHEET_COEFS_MODELOS = "Coefs_Modelos_Acum"
-    SHEET_CLASSIF_MODELOS = "Classif_Modelos_Acum"
-    SHEET_FORECASTS_MODELOS = "Forecasts_Modelos_Acum"
-    SHEET_PROJ_MODELOS = "Projecoes_Modelos_Acum"
-    SHEET_RESUMO_MODELOS = "Resumo_Modelos_Acum"
-    SHEET_CLASSIF_REG = "Classif_Regressao"
-    SHEET_PROJ_PROB = "Projecoes_Prob"
-    SHEET_FORECASTS = "Match_Forecasts"
-    SHEET_CLASSIF_PROB = "Classif_Prob_MC"
-    SHEET_METRICAS = "Metricas_Prob"
-    SHEET_CONTEXTO = "Base_Contexto"
+from brasileirao_sheet_names import (
+    LABEL_MEDIA,
+    LABEL_PROB,
+    MODELOS_XLSX_NAME,
+    SHEET_CLASSIF_MODELOS,
+    SHEET_CLASSIF_PROB,
+    SHEET_CLASSIF_REG,
+    SHEET_COEFS_MODELOS,
+    SHEET_COEFS_REG,
+    SHEET_CONTEXTO,
+    SHEET_FORECASTS,
+    SHEET_FORECASTS_MODELOS,
+    SHEET_LEIA_ME,
+    SHEET_METRICAS,
+    SHEET_PROJ_MODELOS,
+    SHEET_PROJ_PROB,
+    SHEET_PROJ_REG,
+    SHEET_RESUMO_MODELOS,
+)
 
 
 def modelos_xlsx_candidates() -> list[Path]:
