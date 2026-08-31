@@ -41,10 +41,12 @@ from entrega_xlsx import (  # noqa: E402
     MODELOS_XLSX_NAME,
     SHEET_CLASSIF_PROB,
     SHEET_CLASSIF_REG,
+    SHEET_CLASSIF_MODELOS,
     SHEET_COEFS_MODELOS,
     SHEET_COEFS_REG,
     SHEET_CONTEXTO,
     SHEET_FORECASTS,
+    SHEET_FORECASTS_MODELOS,
     SHEET_LEIA_ME,
     SHEET_METRICAS,
     SHEET_OVERLAY,
@@ -200,6 +202,278 @@ def _gerar_modelos_acumulados(
     return pd.DataFrame(proj_rows), pd.DataFrame(resumo_rows), coefs_all
 
 
+def _matches_para_janela(
+    matches: pd.DataFrame,
+    janela: str,
+    cal_teams: list[str],
+    ano_cal: int,
+    cfg,
+) -> pd.DataFrame:
+    from recency import (
+        JanelaTreino,
+        attach_sample_weights,
+        filter_matches_by_janela,
+        load_recency_settings,
+    )
+
+    janela_t: JanelaTreino = janela  # type: ignore[assignment]
+    rcfg = load_recency_settings(cfg)
+    m = filter_matches_by_janela(
+        matches,
+        janela_t,
+        ano_calendario=int(ano_cal),
+        calendar_teams=cal_teams,
+        history_rounds=int(rcfg["history_rounds"]),
+    )
+    return attach_sample_weights(
+        m,
+        calendar_teams=cal_teams,
+        current_season=int(ano_cal),
+        janela=janela_t,
+        ano_calendario=int(ano_cal),
+    )
+
+
+def _gerar_media_prob_janelas(
+    matches: pd.DataFrame,
+    jogos: list[Jogo],
+    cfg,
+    *,
+    ano_calendario: int,
+    r_ini: int,
+    r_fim: int,
+    run_backtest: bool,
+    progress,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    object,
+    list,
+    pd.DataFrame,
+    pd.DataFrame | None,
+]:
+    """Média + Probabilístico × 3 janelas → projeções, resumo, coefs, classif, forecasts."""
+    import json
+
+    from recency import JANELA_TREINO_LABELS, JanelaTreino
+    from brasileirao_projecao_core import (
+        aplicar_projecoes,
+        export_medias_para_base,
+        jogos_treino_por_janela,
+        stats_acumuladas_ate,
+    )
+    from modelos_acumulados import LABEL_MEDIA, LABEL_PROB
+    from prob_ml.config import budget_n_sims
+    from prob_ml.context_calendar import context_for_team
+    from prob_ml.offline import forecast_calendar_games
+    from prob_ml.pipeline import train_pipeline
+    from prob_ml.simulation import result_to_frame, simulate_season
+
+    cal_teams = times_do_calendario(jogos)
+    proj_parts: list[pd.DataFrame] = []
+    resumo_parts: list[dict] = []
+    coef_parts: list[pd.DataFrame] = []
+    classif_parts: list[pd.DataFrame] = []
+    fc_parts: list[pd.DataFrame] = []
+
+    bundle_ref = None
+    forecasts_ref: list = []
+    cal_prob_ref = pd.DataFrame()
+    standings_ref = None
+
+    for janela in MODELOS_ACUM_JANELAS:
+        janela_t: JanelaTreino = janela  # type: ignore[assignment]
+        janela_lbl = JANELA_TREINO_LABELS[janela_t]
+        logger.info("Média + Prob | janela=%s", janela_lbl)
+
+        try:
+            _, log_media = aplicar_projecoes(
+                jogos,
+                "media_simples",
+                r_ini,
+                r_fim,
+                "mandante_visitante",
+                janela=janela_t,
+                ano_calendario=ano_calendario,
+            )
+            if not log_media.empty:
+                media_df = log_media.copy()
+                media_df.insert(0, "Janela", janela_lbl)
+                media_df.insert(0, "Modelo", LABEL_MEDIA)
+                proj_parts.append(media_df[["Modelo", "Janela", "Rodada", "Mandante", "Visitante", "Proj"]])
+            n_media = len(
+                jogos_treino_por_janela(jogos, janela_t, ano_calendario=ano_calendario)
+            )
+            resumo_parts.append(
+                {
+                    "Modelo": LABEL_MEDIA,
+                    "Janela": janela_lbl,
+                    "N observações": n_media,
+                    "R²": None,
+                }
+            )
+            coef_m = export_medias_para_base(
+                jogos, r_ini, r_fim, janela_t, janela_lbl, ano_calendario=ano_calendario
+            )
+            if coef_m is not None and not coef_m.empty:
+                coef_parts.append(coef_m)
+        except Exception as e:
+            logger.warning("Média / %s: %s", janela_lbl, e)
+
+        try:
+            matches_j = _matches_para_janela(
+                matches, janela, cal_teams, ano_calendario, cfg
+            )
+            do_bt = run_backtest and janela_t == "ultimas_38_rodadas"
+            bundle_j = train_pipeline(
+                matches_j, cfg, run_backtest=do_bt, progress=progress
+            )
+            forecasts_j = forecast_calendar_games(bundle_j, jogos)
+            prob_rows: list[dict] = []
+            legacy_cal: list[dict] = []
+            for p in forecasts_j:
+                try:
+                    dh, ih = context_for_team(str(p["home_team"]), p.get("date"))
+                    da, ia = context_for_team(str(p["away_team"]), p.get("date"))
+                except Exception:
+                    dh, ih, da, ia = 7.0, "Não tem", 7.0, "Não tem"
+                prob_rows.append(
+                    {
+                        "Modelo": LABEL_PROB,
+                        "Janela": janela_lbl,
+                        "Rodada": p["round"],
+                        "Mandante": p["home_team"],
+                        "Visitante": p["away_team"],
+                        "Proj": f"{p['xpts_home']:.2f} / {p['xpts_away']:.2f}",
+                    }
+                )
+                if janela_t == "ultimas_38_rodadas":
+                    legacy_cal.append(
+                        {
+                            "Rodada": p["round"],
+                            "Mandante": p["home_team"],
+                            "Visitante": p["away_team"],
+                            "Proj": f"{p['xpts_home']:.2f} / {p['xpts_away']:.2f}",
+                            "λ": f"{p['xg_home']:.2f} x {p['xg_away']:.2f}",
+                            "1X2": f"{p['p_home']:.0%} / {p['p_draw']:.0%} / {p['p_away']:.0%}",
+                            "xpts_home": p["xpts_home"],
+                            "xpts_away": p["xpts_away"],
+                            "Descanso M": dh,
+                            "Descanso V": da,
+                            "Importante M": ih,
+                            "Importante V": ia,
+                        }
+                    )
+            if prob_rows:
+                proj_parts.append(pd.DataFrame(prob_rows))
+
+            teams = cal_teams
+            current = {
+                t: {"points": 0.0, "wins": 0.0, "gd": 0.0, "gf": 0.0} for t in teams
+            }
+            for t in teams:
+                st = stats_acumuladas_ate(jogos, t, 38, so_realizados=True)
+                current[t] = {
+                    "points": float(st.pts),
+                    "wins": float(st.vit),
+                    "gd": float(st.sg),
+                    "gf": float(st.gf),
+                }
+            fixtures = [
+                (p["home_team"], p["away_team"], p["dist"])
+                for p in forecasts_j
+                if "dist" in p
+            ]
+            standings_j = None
+            if fixtures:
+                res = simulate_season(
+                    teams, current, fixtures, n_sims=budget_n_sims(cfg), seed=42
+                )
+                standings_j = result_to_frame(res)
+                st_df = standings_j.copy()
+                st_df.insert(0, "Janela", janela_lbl)
+                st_df.insert(0, "Modelo", LABEL_PROB)
+                classif_parts.append(st_df)
+
+            metrics = bundle_j.status.metrics or {}
+            ens_r2 = None
+            if isinstance(metrics, dict):
+                ens = metrics.get("ensemble") or {}
+                ens_r2 = ens.get("r2") or ens.get("R2")
+            resumo_parts.append(
+                {
+                    "Modelo": LABEL_PROB,
+                    "Janela": janela_lbl,
+                    "N observações": len(matches_j),
+                    "R²": ens_r2,
+                }
+            )
+
+            fc_rows = []
+            for p in forecasts_j:
+                fc_rows.append(
+                    {
+                        "Modelo": LABEL_PROB,
+                        "Janela": janela_lbl,
+                        "round": p.get("round"),
+                        "date": p.get("date"),
+                        "home_team": p["home_team"],
+                        "away_team": p["away_team"],
+                        "xg_home": p["xg_home"],
+                        "xg_away": p["xg_away"],
+                        "p_home": p["p_home"],
+                        "p_draw": p["p_draw"],
+                        "p_away": p["p_away"],
+                        "xpts_home": p["xpts_home"],
+                        "xpts_away": p["xpts_away"],
+                        "over_25": p.get("over_25"),
+                        "btts_yes": p.get("btts_yes"),
+                        "top_scores": json.dumps(p.get("top_scores") or []),
+                    }
+                )
+            if fc_rows:
+                fc_parts.append(pd.DataFrame(fc_rows))
+
+            if janela_t == "ultimas_38_rodadas":
+                bundle_ref = bundle_j
+                forecasts_ref = forecasts_j
+                cal_prob_ref = pd.DataFrame(legacy_cal)
+                standings_ref = standings_j
+        except Exception as e:
+            logger.warning("Prob / %s: %s", janela_lbl, e)
+            resumo_parts.append(
+                {
+                    "Modelo": LABEL_PROB,
+                    "Janela": janela_lbl,
+                    "N observações": None,
+                    "R²": None,
+                    "Erro": str(e)[:200],
+                }
+            )
+
+    proj_all = pd.concat(proj_parts, ignore_index=True) if proj_parts else pd.DataFrame()
+    resumo_all = pd.DataFrame(resumo_parts)
+    coef_all = pd.concat(coef_parts, ignore_index=True) if coef_parts else pd.DataFrame()
+    classif_all = (
+        pd.concat(classif_parts, ignore_index=True) if classif_parts else pd.DataFrame()
+    )
+    fc_all = pd.concat(fc_parts, ignore_index=True) if fc_parts else pd.DataFrame()
+    return (
+        proj_all,
+        resumo_all,
+        coef_all,
+        classif_all,
+        fc_all,
+        bundle_ref,
+        forecasts_ref,
+        cal_prob_ref,
+        standings_ref,
+    )
+
+
 def _seasons_for_download(cfg) -> list[int]:
     from datetime import date
     from recency import allowed_seasons
@@ -280,9 +554,40 @@ def main() -> int:
     def _prog(frac: float, msg: str) -> None:
         logger.info("[%.0f%%] %s", 100 * frac, msg)
 
-    bundle = train_pipeline(
-        matches, cfg, run_backtest=not args.no_backtest, progress=_prog
+    r_ini, r_fim = 1, 38
+    ano_cal = max(
+        (
+            int(str(j.data)[:4])
+            for j in jogos
+            if j.data and str(j.data)[:4].isdigit()
+        ),
+        default=2026,
     )
+
+    (
+        proj_mp,
+        resumo_mp,
+        coef_mp,
+        classif_modelos,
+        forecasts_modelos,
+        bundle,
+        forecasts,
+        cal_prob,
+        standings,
+    ) = _gerar_media_prob_janelas(
+        matches,
+        jogos,
+        cfg,
+        ano_calendario=ano_cal,
+        r_ini=r_ini,
+        r_fim=r_fim,
+        run_backtest=not args.no_backtest,
+        progress=_prog,
+    )
+    if bundle is None:
+        logger.error("Falha no treino probabilístico (38 rodadas).")
+        return 1
+
     try:
         save_offline_artifacts(
             bundle, forecasts=[], standings=None, calendar_proj=None, cfg=cfg
@@ -291,52 +596,19 @@ def main() -> int:
     except Exception as e:
         logger.warning("Bundle intermediário: %s", e)
 
-    # --- Probabilístico: previsões + MC ---
-    forecasts = forecast_calendar_games(bundle, jogos)
     logger.info("Prob: %s jogos pendentes", len(forecasts))
-    cal_rows = []
-    for p in forecasts:
-        try:
-            dh, ih = context_for_team(str(p["home_team"]), p.get("date"))
-            da, ia = context_for_team(str(p["away_team"]), p.get("date"))
-        except Exception:
-            dh, ih, da, ia = 7.0, "Não tem", 7.0, "Não tem"
-        cal_rows.append(
-            {
-                "Rodada": p["round"],
-                "Mandante": p["home_team"],
-                "Visitante": p["away_team"],
-                "Proj": f"{p['xpts_home']:.2f} / {p['xpts_away']:.2f}",
-                "λ": f"{p['xg_home']:.2f} x {p['xg_away']:.2f}",
-                "1X2": f"{p['p_home']:.0%} / {p['p_draw']:.0%} / {p['p_away']:.0%}",
-                "xpts_home": p["xpts_home"],
-                "xpts_away": p["xpts_away"],
-                "Descanso M": dh,
-                "Descanso V": da,
-                "Importante M": ih,
-                "Importante V": ia,
-            }
-        )
-    cal_prob = pd.DataFrame(cal_rows)
-    teams = times_do_calendario(jogos)
-    current = {t: {"points": 0.0, "wins": 0.0, "gd": 0.0, "gf": 0.0} for t in teams}
-    for t in teams:
-        st = stats_acumuladas_ate(jogos, t, 38, so_realizados=True)
-        current[t] = {
-            "points": float(st.pts),
-            "wins": float(st.vit),
-            "gd": float(st.sg),
-            "gf": float(st.gf),
-        }
-    fixtures = [
-        (p["home_team"], p["away_team"], p["dist"]) for p in forecasts if "dist" in p
-    ]
-    standings = None
-    if fixtures:
-        res = simulate_season(
-            teams, current, fixtures, n_sims=budget_n_sims(cfg), seed=42
-        )
-        standings = result_to_frame(res)
+    if cal_prob.empty and forecasts:
+        cal_rows = []
+        for p in forecasts:
+            cal_rows.append(
+                {
+                    "Rodada": p["round"],
+                    "Mandante": p["home_team"],
+                    "Visitante": p["away_team"],
+                    "Proj": f"{p['xpts_home']:.2f} / {p['xpts_away']:.2f}",
+                }
+            )
+        cal_prob = pd.DataFrame(cal_rows)
 
     forecasts_save = [{k: v for k, v in p.items() if k != "dist"} for p in forecasts]
     save_offline_artifacts(
@@ -359,8 +631,6 @@ def main() -> int:
     )
 
     # --- Regressão (efeitos fixos + multi-liga + contexto) ---
-    r_ini, r_fim = 1, 38
-    ano_cal = max((int(str(j.data)[:4]) for j in jogos if j.data and str(j.data)[:4].isdigit()), default=2026)
     jogos_reg, log_reg = aplicar_projecoes(
         jogos,
         "regressao_completa",
@@ -384,8 +654,14 @@ def main() -> int:
     proj_modelos, resumo_modelos, coefs_modelos = _gerar_modelos_acumulados(
         jogos, r_ini, r_fim, ano_calendario=ano_cal
     )
+    if not proj_mp.empty:
+        proj_modelos = pd.concat([proj_modelos, proj_mp], ignore_index=True)
+    if not resumo_mp.empty:
+        resumo_modelos = pd.concat([resumo_modelos, resumo_mp], ignore_index=True)
+    if not coef_mp.empty:
+        coefs_modelos = pd.concat([coefs_modelos, coef_mp], ignore_index=True)
     logger.info(
-        "Modelos acumulados: %s projeções, %s resumos, %s coeficientes",
+        "Modelos (todos): %s projeções, %s resumos, %s coeficientes",
         len(proj_modelos),
         len(resumo_modelos),
         len(coefs_modelos),
@@ -472,7 +748,7 @@ def main() -> int:
         "fingerprint": bundle.status.dataset_fingerprint,
         "runtime_sec": bundle.status.runtime_sec,
         "context_vars": "dias_descanso + jogos_importantes",
-        "modelos_acumulados": "FE + Kalman + XGBoost + GAM × 3 janelas",
+        "modelos_acumulados": "FE + Kalman + XGBoost + GAM + Média + Prob × 3 janelas",
     }
     # Destinos: dados/ (junto ao calendário) + entrega + Downloads
     destinos = [
@@ -498,6 +774,8 @@ def main() -> int:
         proj_modelos=proj_modelos,
         resumo_modelos=resumo_modelos,
         coefs_modelos=coefs_modelos,
+        classif_modelos=classif_modelos,
+        forecasts_modelos=forecasts_modelos,
         meta=meta,
     )
     for dest in destinos[1:]:
@@ -539,6 +817,8 @@ def main() -> int:
                     SHEET_PROJ_MODELOS: proj_modelos,
                     SHEET_RESUMO_MODELOS: resumo_modelos,
                     SHEET_COEFS_MODELOS: coefs_modelos,
+                    SHEET_CLASSIF_MODELOS: classif_modelos,
+                    SHEET_FORECASTS_MODELOS: forecasts_modelos,
                     SHEET_PROJ_PROB: cal_prob,
                     SHEET_FORECASTS: fc_df if fc_df is not None else pd.DataFrame(),
                     SHEET_CLASSIF_PROB: classif_prob,

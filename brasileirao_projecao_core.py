@@ -128,6 +128,34 @@ def preparar_blocos_treino_janela(
     return blocos
 
 
+def jogos_treino_por_janela(
+    jogos_calendario: list[Jogo],
+    janela: JanelaTreino,
+    *,
+    blocos_extra: list[list[Jogo]] | None = None,
+    ano_calendario: int = 2026,
+) -> list[Jogo]:
+    """Jogos disputados nos blocos da janela (sem duplicatas)."""
+    blocos = preparar_blocos_treino_janela(
+        jogos_calendario,
+        janela,
+        blocos_extra=blocos_extra,
+        ano_calendario=ano_calendario,
+    )
+    out: list[Jogo] = []
+    seen: set[tuple] = set()
+    for bloco in blocos:
+        for j in bloco:
+            if not j.jogado:
+                continue
+            key = (j.r, j.mand, j.vis, j.data)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(j)
+    return out
+
+
 def modo_e_modelo_acumulado(modo: ModoProjecao) -> bool:
     return modo in ("kalman_acumulada", "xgboost_acumulada", "gam_acumulada")
 
@@ -2071,12 +2099,32 @@ def fator_forma_recente(
     time: str,
     r_ini: int,
     r_fim: int,
+    *,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> float:
     """Razão média últimos 5 jogos / média do campeonato no intervalo."""
-    media_camp = media_pts_jogo(jogos, time, r_ini, r_fim, "simples")["geral"]
+    media_camp = media_pts_jogo(
+        jogos,
+        time,
+        r_ini,
+        r_fim,
+        "simples",
+        janela=janela,
+        ano_calendario=ano_calendario,
+        blocos_extra=blocos_extra,
+    )["geral"]
     if media_camp <= 0:
         return 1.0
-    return forma_recente_atual(jogos, time) / media_camp
+    jogos_use = (
+        jogos_treino_por_janela(
+            jogos, janela, blocos_extra=blocos_extra, ano_calendario=ano_calendario
+        )
+        if janela
+        else jogos
+    )
+    return forma_recente_atual(jogos_use, time) / media_camp
 
 
 def projetar_jogo_media(
@@ -2098,15 +2146,27 @@ def media_pts_jogo(
     r_ini: int,
     r_fim: int,
     tipo: TipoRegressao,
+    *,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> dict[str, float]:
     """
     Média ponderada de pontos por jogo no intervalo [r_ini, r_fim].
     Pesos decaem progressivamente conforme a rodada fica mais distante da mais recente.
     """
     rcfg = load_recency_settings()
-    jogos_use = filter_jogos_by_round_window(
-        jogos, n_rounds=int(rcfg["history_rounds"])
-    )
+    if janela is not None:
+        jogos_use = jogos_treino_por_janela(
+            jogos,
+            janela,
+            blocos_extra=blocos_extra,
+            ano_calendario=ano_calendario,
+        )
+    else:
+        jogos_use = filter_jogos_by_round_window(
+            jogos, n_rounds=int(rcfg["history_rounds"])
+        )
     r_latest = max((j.r for j in jogos_use if j.jogado), default=r_fim)
     pts_total: list[float] = []
     w_total: list[float] = []
@@ -2125,6 +2185,9 @@ def media_pts_jogo(
             j,
             r_latest=r_latest,
             half_life_rounds=float(rcfg["half_life_rounds"]),
+            current_season=int(ano_calendario),
+            janela=janela,
+            ano_calendario=int(ano_calendario),
         )
         if j.mand == time:
             pts_total.append(float(pm))
@@ -2399,23 +2462,53 @@ def aplicar_projecoes_media(
     *,
     usar_forma: bool = True,
     forma_decaindo: bool = True,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> tuple[list[Jogo], pd.DataFrame]:
     """Média casa/fora; opcionalmente × fator forma recente (pts decimais)."""
     jogos = [Jogo(**j.__dict__) for j in jogos]
     times = times_do_calendario(jogos)
     medias = {
-        t: media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante") for t in times
+        t: media_pts_jogo(
+            jogos,
+            t,
+            r_ini,
+            r_fim,
+            "mandante_visitante",
+            janela=janela,
+            ano_calendario=ano_calendario,
+            blocos_extra=blocos_extra,
+        )
+        for t in times
     }
     fatores = (
-        {t: fator_forma_recente(jogos, t, r_ini, r_fim) for t in times}
+        {
+            t: fator_forma_recente(
+                jogos,
+                t,
+                r_ini,
+                r_fim,
+                janela=janela,
+                ano_calendario=ano_calendario,
+                blocos_extra=blocos_extra,
+            )
+            for t in times
+        }
         if usar_forma
         else {t: 1.0 for t in times}
     )
+    janela_lbl = ""
+    if janela:
+        from recency import JANELA_TREINO_LABELS
+
+        janela_lbl = f" · {JANELA_TREINO_LABELS[janela]}"
     origem = (
         "média casa/fora × forma recente"
         if usar_forma
         else "média casa/fora"
     )
+    origem += janela_lbl
     if usar_forma and forma_decaindo:
         origem += " (peso decaindo)"
     log_rows: list[dict] = []
@@ -2486,7 +2579,14 @@ def aplicar_projecoes(
             ano_calendario=ano_calendario,
         )
     if modo == "media_simples":
-        return aplicar_projecoes_media(jogos, r_ini, r_fim, usar_forma=True)
+        return aplicar_projecoes_media(
+            jogos,
+            r_ini,
+            r_fim,
+            usar_forma=True,
+            janela=janela,
+            ano_calendario=ano_calendario,
+        )
     if modo == "media_casa_fora":
         return aplicar_projecoes_media(
             jogos, r_ini, r_fim, usar_forma=False, forma_decaindo=False
@@ -2658,11 +2758,23 @@ def tabela_medias_simples_times(
     r_fim: int,
     *,
     usar_forma: bool = True,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int = 2026,
+    blocos_extra: list[list[Jogo]] | None = None,
 ) -> pd.DataFrame:
     """Médias de pts/jogo; opcionalmente com fator forma e projeção ajustada."""
     rows: list[dict] = []
     for t in times_do_calendario(jogos):
-        m = media_pts_jogo(jogos, t, r_ini, r_fim, "mandante_visitante")
+        m = media_pts_jogo(
+            jogos,
+            t,
+            r_ini,
+            r_fim,
+            "mandante_visitante",
+            janela=janela,
+            ano_calendario=ano_calendario,
+            blocos_extra=blocos_extra,
+        )
         media_casa = m.get("casa", m["geral"])
         media_fora = m.get("fora", m["geral"])
         row: dict = {
@@ -2672,7 +2784,15 @@ def tabela_medias_simples_times(
             "Média pts/jogo (fora)": round(media_fora, 3),
         }
         if usar_forma:
-            fator = fator_forma_recente(jogos, t, r_ini, r_fim)
+            fator = fator_forma_recente(
+                jogos,
+                t,
+                r_ini,
+                r_fim,
+                janela=janela,
+                ano_calendario=ano_calendario,
+                blocos_extra=blocos_extra,
+            )
             row["Fator forma (últ. 5 / camp.)"] = round(fator, 3)
             row["Proj. pts/jogo (casa)"] = round(media_casa * fator, 3)
             row["Proj. pts/jogo (fora)"] = round(media_fora * fator, 3)
@@ -2681,6 +2801,42 @@ def tabela_medias_simples_times(
             row["Proj. pts/jogo (fora)"] = round(media_fora, 3)
         rows.append(row)
     return pd.DataFrame(rows).sort_values("Time")
+
+
+def export_medias_para_base(
+    jogos: list[Jogo],
+    r_ini: int,
+    r_fim: int,
+    janela: JanelaTreino,
+    janela_lbl: str,
+    *,
+    ano_calendario: int = 2026,
+    nome_modelo: str = "Média",
+) -> pd.DataFrame:
+    """Serializa médias por time para Coefs_Modelos_Acum."""
+    df = tabela_medias_simples_times(
+        jogos,
+        r_ini,
+        r_fim,
+        usar_forma=True,
+        janela=janela,
+        ano_calendario=ano_calendario,
+    )
+    rows: list[dict] = []
+    for _, row in df.iterrows():
+        for col in df.columns:
+            if col == "Time":
+                continue
+            rows.append(
+                {
+                    "Modelo": nome_modelo,
+                    "Janela": janela_lbl,
+                    "Time": row["Time"],
+                    "Variável": col,
+                    "Beta": row[col],
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def tabela_jogos_primeiro_turno(jogos: list[Jogo]) -> pd.DataFrame:

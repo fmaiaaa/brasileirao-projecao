@@ -38,7 +38,6 @@ from brasileirao_projecao_core import (
     kpis_globais,
     mapa_posicao_pontos,
     probabilidades_cenarios_finais,
-    tabela_medias_simples_times,
     tabela_jogos_primeiro_turno,
     tabela_comparativa_posicoes,
     tabela_estatisticas_times,
@@ -49,17 +48,15 @@ from brasileirao_weekly_base import (
     aplicar_projecoes_csv_com_gap,
     enriquecer_stats_com_contexto,
     jogos_serie_a_ano,
+    load_classif_modelos_acum,
     load_coefs_modelos_acum,
-    load_prob_forecasts,
+    load_forecasts_modelos_acum,
     load_prob_metricas,
-    load_prob_projecoes,
-    load_prob_standings,
     load_projecoes_modelos_acum,
     load_resumo_modelos_acum,
-    modelos_ready,
 )
 from recency import JANELA_TREINO_LABELS, JanelaTreino
-from modelos_acumulados import MODO_PARA_LABEL
+from modelos_acumulados import LABEL_MEDIA, LABEL_PROB, MODO_PARA_LABEL
 
 _PLOTLY_CONFIG = {
     "displaylogo": False,
@@ -428,52 +425,54 @@ modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 modo: ModoProjecao
 tipo: TipoRegressao = "mandante_visitante"
 janela_treino: JanelaTreino = "ultimas_38_rodadas"
-_prob_bundle = None
 _prob_preds: list = []
 _prob_sim_df = None
 
-if modo_label.startswith("Pontos acumulados"):
-    _sub_modelo = st.radio(
-        "Modelo",
-        options=[
-            "Regressão FE (completa)",
-            "Kalman / espaço de estados",
-            "XGBoost",
-            "GAM",
-        ],
-        index=0,
-        horizontal=True,
-    )
+if modo_label == _MODO_TURNO:
+    modo = "repetir_turno"
+else:
     _janela_label = st.radio(
         "Janela de treino",
         options=list(JANELA_TREINO_LABELS.values()),
         index=1,
         horizontal=True,
+        help="Define quais jogos entram no treino de cada modelo (exceto Repetir 1º turno).",
     )
     janela_treino = next(
         k for k, v in JANELA_TREINO_LABELS.items() if v == _janela_label
     )
-    if _sub_modelo.startswith("Regressão"):
-        modo = "regressao_completa"
-    elif _sub_modelo.startswith("Kalman"):
-        modo = "kalman_acumulada"
-    elif _sub_modelo.startswith("XGBoost"):
-        modo = "xgboost_acumulada"
+    if modo_label.startswith("Pontos acumulados"):
+        _sub_modelo = st.radio(
+            "Modelo",
+            options=[
+                "Regressão FE (completa)",
+                "Kalman / espaço de estados",
+                "XGBoost",
+                "GAM",
+            ],
+            index=0,
+            horizontal=True,
+        )
+        if _sub_modelo.startswith("Regressão"):
+            modo = "regressao_completa"
+        elif _sub_modelo.startswith("Kalman"):
+            modo = "kalman_acumulada"
+        elif _sub_modelo.startswith("XGBoost"):
+            modo = "xgboost_acumulada"
+        else:
+            modo = "gam_acumulada"
+    elif modo_label == _MODO_MEDIA:
+        modo = "media_simples"
+    elif modo_label == _MODO_PROB:
+        modo = "prob_ml"
     else:
-        modo = "gam_acumulada"
-elif modo_label == _MODO_MEDIA:
-    modo = "media_simples"
-elif modo_label == _MODO_TURNO:
-    modo = "repetir_turno"
-elif modo_label == _MODO_PROB:
-    modo = "prob_ml"
-else:
-    modo = "repetir_turno"
+        modo = "repetir_turno"
+
+_janela_lbl = JANELA_TREINO_LABELS[janela_treino]
 
 with st.expander("Detalhes do modelo"):
     if modo_e_regressao_acumulada(modo):
         _modelo_lbl = MODO_PARA_LABEL.get(modo, modo)
-        _janela_lbl = JANELA_TREINO_LABELS[janela_treino]
         st.caption(
             f"Coeficientes e projeções da base semanal (job de segunda 03:00). "
             f"Modelo: {_modelo_lbl} · Janela: {_janela_lbl}. "
@@ -523,27 +522,40 @@ with st.expander("Detalhes do modelo"):
             )
     elif modo == "media_simples":
         st.caption(
-            "Projeção = média pts/jogo em casa ou fora × fator de forma "
-            "(somente jogos deste Brasileirão / calendário atual). "
-            "O fator mistura forma recente e forma geral: peso da recente cai de "
-            "80% (próxima rodada) para 50% (daqui a 5) até o piso de 20%."
+            f"Médias e projeções da base semanal · Janela: {_janela_lbl}. "
+            "Projeção = média pts/jogo em casa ou fora × fator de forma."
         )
-        _tabela(
-            tabela_medias_simples_times(
-                _jogos_base, r_ini_proj, r_fim_proj, usar_forma=True
-            ),
-            column_config={
-                "Time": st.column_config.TextColumn("Time", pinned="left"),
-            },
-            key="tbl_media",
-        )
+        _resumo = load_resumo_modelos_acum(LABEL_MEDIA, _janela_lbl)
+        if _resumo is not None and not _resumo.empty:
+            st.caption(
+                f"N obs treino = {_resumo.iloc[0].get('N observações', '—')}"
+            )
+        _coefs = load_coefs_modelos_acum(LABEL_MEDIA, _janela_lbl)
+        if _coefs is not None and not _coefs.empty:
+            _tabela(
+                _coefs,
+                column_config={
+                    "Time": st.column_config.TextColumn("Time", pinned="left"),
+                    "Variável": st.column_config.TextColumn("Variável"),
+                    "Beta": st.column_config.NumberColumn("Valor", format="%.3f"),
+                },
+                key="tbl_media",
+            )
+        else:
+            st.info("Médias por time ainda não disponíveis na base para esta janela.")
     elif modo == "prob_ml":
         st.caption(
-            "Previsões e Monte Carlo da base semanal (planilha Sheets). "
-            "Placares novos saem da projeção; jogos sem linha usam gap-fill de média."
+            f"Previsões e Monte Carlo da base semanal · Janela: {_janela_lbl}."
         )
+        _resumo = load_resumo_modelos_acum(LABEL_PROB, _janela_lbl)
+        if _resumo is not None and not _resumo.empty:
+            st.caption(
+                f"N obs treino = {_resumo.iloc[0].get('N observações', '—')} · "
+                f"R² ensemble = {_resumo.iloc[0].get('R²', '—')}"
+            )
         _met = load_prob_metricas()
-        if _met is not None and not _met.empty:
+        if _met is not None and not _met.empty and janela_treino == "ultimas_38_rodadas":
+            st.caption("Métricas OOF (referência — janela Últimas 38 rodadas):")
             _tabela(_met, key="tbl_metricas_prob")
     else:
         st.caption(
@@ -555,20 +567,28 @@ with st.expander("Detalhes do modelo"):
         _tabela(tabela_jogos_primeiro_turno(_jogos_base), key="tbl_turno")
 
 if modo == "prob_ml":
-    _cal = load_prob_projecoes() if modelos_ready() else None
-    _stand = load_prob_standings() if modelos_ready() else None
-    _fc = load_prob_forecasts() if modelos_ready() else None
+    _cal = load_projecoes_modelos_acum(LABEL_PROB, _janela_lbl)
+    _stand = load_classif_modelos_acum(LABEL_PROB, _janela_lbl)
+    _fc = load_forecasts_modelos_acum(LABEL_PROB, _janela_lbl)
 
-    jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
-        _jogos_base,
-        _cal if _cal is not None and not getattr(_cal, "empty", True) else _fc,
-        r_ini=r_ini_proj,
-        r_fim=r_fim_proj,
-        origem="prob_ml/xlsx",
-    )
+    if _cal is None or _cal.empty:
+        st.warning(
+            f"Projeções probabilísticas ({_janela_lbl}) não encontradas na base. "
+            "Execute o job semanal."
+        )
+        jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
+        df_log = pd.DataFrame()
+    else:
+        jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+            _jogos_base,
+            _cal,
+            r_ini=r_ini_proj,
+            r_fim=r_fim_proj,
+            origem=f"prob_ml/{_janela_lbl}",
+        )
 
     if _stand is not None and not _stand.empty:
-        _prob_sim_df = _stand
+        _prob_sim_df = _stand.drop(columns=["Modelo", "Janela"], errors="ignore")
     if _fc is not None and not _fc.empty:
         from prob_ml.integration import _safe_float as _sf
 
@@ -605,9 +625,26 @@ if modo == "prob_ml":
             elif not tops:
                 p["top_scores"] = []
 
+elif modo == "media_simples":
+    _cal_media = load_projecoes_modelos_acum(LABEL_MEDIA, _janela_lbl)
+    if _cal_media is None or _cal_media.empty:
+        st.warning(
+            f"Projeções de Média ({_janela_lbl}) não encontradas na base semanal. "
+            "Execute o job de segunda ou scripts/weekly_retrain.py."
+        )
+        jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
+        df_log = pd.DataFrame()
+    else:
+        jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+            _jogos_base,
+            _cal_media,
+            r_ini=r_ini_proj,
+            r_fim=r_fim_proj,
+            origem=f"media/{_janela_lbl}",
+        )
+
 elif modo_e_regressao_acumulada(modo):
     _modelo_lbl = MODO_PARA_LABEL.get(modo, modo)
-    _janela_lbl = JANELA_TREINO_LABELS[janela_treino]
     _cal_acum = load_projecoes_modelos_acum(_modelo_lbl, _janela_lbl)
     if _cal_acum is None or _cal_acum.empty:
         st.warning(

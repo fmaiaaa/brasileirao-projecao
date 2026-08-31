@@ -29,12 +29,14 @@ _ENTREGA = _ROOT / "artifacts" / "entrega"
 try:
     from scripts.entrega_xlsx import (  # type: ignore
         MODELOS_XLSX_NAME,
+        SHEET_CLASSIF_MODELOS,
         SHEET_CLASSIF_PROB,
         SHEET_CLASSIF_REG,
         SHEET_COEFS_MODELOS,
         SHEET_COEFS_REG,
         SHEET_CONTEXTO,
         SHEET_FORECASTS,
+        SHEET_FORECASTS_MODELOS,
         SHEET_LEIA_ME,
         SHEET_METRICAS,
         SHEET_PROJ_MODELOS,
@@ -48,6 +50,8 @@ except Exception:  # pragma: no cover
     SHEET_PROJ_REG = "Projecoes_Regressao"
     SHEET_COEFS_REG = "Coefs_Regressao"
     SHEET_COEFS_MODELOS = "Coefs_Modelos_Acum"
+    SHEET_CLASSIF_MODELOS = "Classif_Modelos_Acum"
+    SHEET_FORECASTS_MODELOS = "Forecasts_Modelos_Acum"
     SHEET_PROJ_MODELOS = "Projecoes_Modelos_Acum"
     SHEET_RESUMO_MODELOS = "Resumo_Modelos_Acum"
     SHEET_CLASSIF_REG = "Classif_Regressao"
@@ -201,6 +205,22 @@ def load_resumo_modelos_acum(
 ) -> pd.DataFrame | None:
     """R² e N observações por modelo/janela."""
     return _filtrar_modelo_janela(load_sheet(SHEET_RESUMO_MODELOS), modelo=modelo, janela=janela)
+
+
+def load_classif_modelos_acum(
+    modelo: str | None = None,
+    janela: str | None = None,
+) -> pd.DataFrame | None:
+    """Classificação MC por modelo/janela (ex.: Probabilístico)."""
+    return _filtrar_modelo_janela(load_sheet(SHEET_CLASSIF_MODELOS), modelo=modelo, janela=janela)
+
+
+def load_forecasts_modelos_acum(
+    modelo: str | None = None,
+    janela: str | None = None,
+) -> pd.DataFrame | None:
+    """Previsões de placar por modelo/janela."""
+    return _filtrar_modelo_janela(load_sheet(SHEET_FORECASTS_MODELOS), modelo=modelo, janela=janela)
 
 
 def load_prob_projecoes() -> pd.DataFrame | None:

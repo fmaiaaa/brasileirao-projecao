@@ -50,7 +50,12 @@ MODO_PARA_LABEL: dict[str, str] = {
     "kalman_acumulada": "Kalman",
     "xgboost_acumulada": "XGBoost",
     "gam_acumulada": "GAM",
+    "media_simples": "Média",
+    "prob_ml": "Probabilístico",
 }
+
+LABEL_MEDIA = "Média"
+LABEL_PROB = "Probabilístico"
 
 
 @dataclass

@@ -347,6 +347,60 @@ def _rounds_ago_from_timeline(
     return float(latest_idx + 1)
 
 
+def filter_matches_by_janela(
+    df: pd.DataFrame,
+    janela: JanelaTreino,
+    *,
+    ano_calendario: int,
+    calendar_teams: Iterable[str] | None = None,
+    history_rounds: int = DEFAULT_HISTORY_ROUNDS,
+) -> pd.DataFrame:
+    """Filtra partidas FPT conforme janela de treino (espelha ``preparar_blocos_treino_janela``)."""
+    if janela == "ultimas_38_rodadas":
+        return filter_matches_dataframe(
+            df,
+            history_rounds=history_rounds,
+            calendar_teams=calendar_teams,
+            current_season=int(ano_calendario),
+        )
+    if df.empty:
+        return df
+    prep = _prepare_competition(df)
+    played = _played_mask(prep)
+    prep = prep.loc[played].copy()
+    if prep.empty:
+        return prep.drop(columns=[c for c in prep.columns if c.startswith("_")], errors="ignore")
+
+    if janela == "2025":
+        sa_mask = (prep["_comp"] == SERIE_A) & (prep["season"] == 2025)
+        sb_season = 2024
+    elif janela == "ultimos_3_anos":
+        anos = anos_janela_tres_anos(int(ano_calendario), n_anos=3)
+        sa_mask = (prep["_comp"] == SERIE_A) & prep["season"].isin(anos)
+        sb_season = min(anos) - 1
+    else:
+        return filter_matches_dataframe(
+            df,
+            history_rounds=history_rounds,
+            calendar_teams=calendar_teams,
+            current_season=int(ano_calendario),
+        )
+
+    promoted = detect_promoted_teams(
+        prep, calendar_teams=calendar_teams, current_season=int(ano_calendario)
+    )
+    if promoted:
+        sb_mask = (prep["_comp"] == SERIE_B) & (prep["season"] == sb_season) & (
+            prep["home_team"].astype(str).isin(promoted)
+            | prep["away_team"].astype(str).isin(promoted)
+        )
+    else:
+        sb_mask = pd.Series(False, index=prep.index)
+
+    out = prep.loc[sa_mask | sb_mask].copy()
+    return out.drop(columns=[c for c in out.columns if c.startswith("_")], errors="ignore")
+
+
 def filter_matches_dataframe(
     df: pd.DataFrame,
     *,
@@ -394,6 +448,8 @@ def attach_sample_weights(
     half_life_rounds: float = DEFAULT_HALF_LIFE_ROUNDS,
     calendar_teams: Iterable[str] | None = None,
     current_season: int | None = None,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int | None = None,
 ) -> pd.DataFrame:
     """Coluna ``sample_weight`` com decaimento por distância de rodada."""
     out = _prepare_competition(matches)
@@ -419,8 +475,8 @@ def attach_sample_weights(
                 rnd,
                 current_season=int(current_season),
                 r_latest=int(r_latest),
-                janela=None,
-                ano_calendario=int(current_season),
+                janela=janela,
+                ano_calendario=int(ano_calendario or current_season),
             )
         else:
             ra = _rounds_ago_from_timeline(
