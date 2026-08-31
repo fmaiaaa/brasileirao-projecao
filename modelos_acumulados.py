@@ -364,7 +364,8 @@ def ajustar_gam(painel: PainelTreino) -> ModeloAcumuladoAjustado:
     from sklearn.linear_model import Ridge
     from sklearn.preprocessing import SplineTransformer
 
-    n_team = len(painel.times)
+    usar_serie = "comp_serie_a" in painel.feature_names
+    n_team_block = _n_team_block(painel.times, usar_serie)
     n_cont = len(CONTINUOUS_FEATURES)
     n = painel.n_obs
     if n == 0:
@@ -372,8 +373,8 @@ def ajustar_gam(painel: PainelTreino) -> ModeloAcumuladoAjustado:
             tipo="gam", janela="ultimas_38_rodadas", painel=painel, state=None
         )
 
-    cont = painel.X[:, n_team : n_team + n_cont]
-    rest = painel.X[:, n_team + n_cont :]
+    cont = painel.X[:, n_team_block : n_team_block + n_cont]
+    rest = painel.X[:, n_team_block + n_cont :]
     spl = SplineTransformer(
         n_knots=5, degree=3, include_bias=False, knots="quantile"
     )
@@ -387,7 +388,12 @@ def ajustar_gam(painel: PainelTreino) -> ModeloAcumuladoAjustado:
         tipo="gam",
         janela="ultimas_38_rodadas",
         painel=painel,
-        state={"ridge": ridge, "splines": spl, "n_team": n_team, "n_cont": n_cont},
+        state={
+            "ridge": ridge,
+            "splines": spl,
+            "n_team_block": n_team_block,
+            "n_cont": n_cont,
+        },
         r2=round(r2, 4) if r2 is not None else None,
     )
 
@@ -407,6 +413,11 @@ def ajustar_modelo_acumulado(
     return m
 
 
+def _n_team_block(times_ref: list[str], usar_interacao_serie: bool) -> int:
+    n = len(times_ref)
+    return n + (1 + n if usar_interacao_serie else 0)
+
+
 def _vetor_features_projecao(
     time: str,
     rodada: int,
@@ -417,14 +428,20 @@ def _vetor_features_projecao(
     descanso: float,
     importante: str,
     times_ref: list[str],
+    comp_serie_a: float = 1.0,
+    usar_interacao_serie: bool = False,
 ) -> np.ndarray:
     r = float(rodada)
     team = _encode_team_dummies([time], times_ref)[0]
+    parts: list[np.ndarray] = [team]
+    if usar_interacao_serie:
+        comp = np.array([comp_serie_a], dtype=float)
+        parts.extend([comp, team * comp_serie_a])
     base = np.array([r, r * r, forma, forca, prop_casa, descanso], dtype=float)
     copa = np.array(
         [_importante_para_colunas(importante)[c] for c in COPA_COLS], dtype=float
     )
-    return np.concatenate([team, base, copa])
+    return np.concatenate(parts + [base, copa])
 
 
 def prever_acumulado_modelo(
@@ -437,7 +454,9 @@ def prever_acumulado_modelo(
     forma: float,
     descanso: float,
     importante: str,
+    comp_serie_a: float = 1.0,
 ) -> float:
+    usar_serie = "comp_serie_a" in modelo.painel.feature_names
     x = _vetor_features_projecao(
         time,
         rodada,
@@ -447,6 +466,8 @@ def prever_acumulado_modelo(
         descanso=descanso,
         importante=importante,
         times_ref=modelo.painel.times,
+        comp_serie_a=comp_serie_a,
+        usar_interacao_serie=usar_serie,
     )
     if modelo.tipo == "kalman":
         assert isinstance(modelo.state, KalmanRegressor)
@@ -455,10 +476,10 @@ def prever_acumulado_modelo(
         return max(float(modelo.state.predict(x.reshape(1, -1))[0]), 0.0)
     # GAM (splines + ridge)
     st = modelo.state
-    n_team = st["n_team"]
+    n_team_block = int(st["n_team_block"])
     n_cont = st["n_cont"]
-    cont = x[n_team : n_team + n_cont]
-    rest = x[n_team + n_cont :]
+    cont = x[n_team_block : n_team_block + n_cont]
+    rest = x[n_team_block + n_cont :]
     X_spline = st["splines"].transform(cont[:2].reshape(1, -1))
     X_full = np.column_stack([X_spline, cont[2:].reshape(1, -1), rest.reshape(1, -1)])
     return max(float(st["ridge"].predict(X_full)[0]), 0.0)
@@ -663,11 +684,13 @@ def aplicar_projecoes_modelo_acumulado(
                 modelo, m, r,
                 prop_casa=prop_m, forca=forca_m, forma=forma_m,
                 descanso=desc_m, importante=imp_m,
+                comp_serie_a=1.0,
             )
             target_v = prever_acumulado_modelo(
                 modelo, v, r,
                 prop_casa=prop_v, forca=forca_v, forma=forma_v,
                 descanso=desc_v, importante=imp_v,
+                comp_serie_a=1.0,
             )
 
             delta_m = min(DELTA_PTS_MAX_POR_RODADA, max(0.0, target_m - prev_m))
