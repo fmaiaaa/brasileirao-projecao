@@ -408,7 +408,7 @@ _MODO_REG = (
     "Regressão - "
     "Pontos Acumulados ~ Efeito Fixo do Time + Rodada + Rodada ao Quadrado + "
     "Interação Rodada × Time + Interação Rodada ao Quadrado × Time + "
-    "Forma Recente + Força dos Adversários Passados + Proporção Casa"
+    "Forma Recente + Força dos Adversários Passados + Indicador casa"
 )
 _MODO_MEDIA = "Média casa x fora × forma recente"
 _MODO_TURNO = "Repetir 1º turno"

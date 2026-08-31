@@ -10,11 +10,12 @@ import numpy as np
 import pandas as pd
 
 from recency import (
+    elastic_net_lstsq,
     filter_jogos_by_recency,
     load_recency_settings,
+    load_regression_settings,
     weighted_mean,
     weights_for_match_dates,
-    wls_lstsq,
 )
 
 ModoProjecao = Literal[
@@ -281,7 +282,28 @@ def pvalor_estrela(p: float | None) -> str:
     return "-"
 
 
-def _ordem_variaveis_regressao(variante: VarianteRegressao) -> list[str]:
+def _ajustar_coeficientes_regressao(
+    X: np.ndarray,
+    y: np.ndarray,
+    weights: np.ndarray | None = None,
+) -> np.ndarray:
+    cfg = load_regression_settings()
+    return elastic_net_lstsq(
+        X,
+        y,
+        weights,
+        alpha=float(cfg["elastic_net_alpha"]),
+        l1_ratio=float(cfg["elastic_net_l1_ratio"]),
+    )
+
+
+def _indicador_casa_jogo(jogo: Jogo | None, time: str) -> float:
+    """Dummy mandante (1) ou visitante (0) no jogo corrente."""
+    if jogo is None:
+        return 0.0
+    return 1.0 if jogo.mand == time else 0.0
+
+
     cols = ["Intercepto", "Rodada", "Indicador casa", "Rodada × casa"]
     if variante == "interacao_adv_turno":
         return [
@@ -544,7 +566,7 @@ def _ajustar_regressao(
         if n < len(cols):
             continue
         X = np.column_stack(cols)
-        coef = wls_lstsq(X, y.astype(float), weights)
+        coef = _ajustar_coeficientes_regressao(X, y.astype(float), weights)
         pvals = _ols_pvalues(X, y.astype(float), coef)
         nomes = _nomes_termos_regressao(
             interacao, forca, turno_flag, forma_flag, rodada2_flag, casa_flag
@@ -687,7 +709,7 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
             "Intercepto",
             "Rodada",
             "Interação Rodada × Time",
-            "Proporção Casa",
+            "Indicador casa",
             "Força dos Adversários Passados",
         ]
     if variante == "completa_limites":
@@ -699,7 +721,7 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
             "Interação Rodada Centrada ao Quadrado × Time",
             "Forma Recente",
             "Força dos Adversários Passados",
-            "Proporção Casa",
+            "Indicador casa",
             "Dias de Descanso",
             "Classificatórias",
             "Oitavas",
@@ -715,7 +737,7 @@ def _ordem_variaveis_regressao_acumulada(variante: VarianteRegressaoAcumulada) -
         "Interação Rodada ao Quadrado × Time",
         "Forma Recente",
         "Força dos Adversários Passados",
-        "Proporção Casa",
+        "Indicador casa",
         "Dias de Descanso",
         "Classificatórias",
         "Oitavas",
@@ -912,10 +934,9 @@ def _coletar_obs_regressao_acumulada(
         if jogo_r is None or not jogo_r.jogado:
             continue
         acum = stats_acumuladas_ate(jogos, time, r, so_realizados=True)
-        n_casa, n_fora = _contagem_casa_fora_ate(jogos, time, r)
         rodadas.append(float(r))
         y_vals.append(float(acum.pts))
-        props.append(_proporcao_casa(n_casa, n_fora))
+        props.append(_indicador_casa_jogo(jogo_r, time))
         forcas.append(_forca_oponentes_passados(jogos, time, r + 1, forca_map))
         formas.append(forma_recente_ate(jogos, time, r, jogo_r.hora))
 
@@ -983,7 +1004,7 @@ def _ajustar_regressao_acumulada(
         if forma_flag:
             nomes.append("Forma Recente")
         if prop_flag:
-            nomes.append("Proporção Casa")
+            nomes.append("Indicador casa")
         if forca_flag:
             nomes.append("Força dos Adversários Passados")
         return nomes
@@ -1049,7 +1070,7 @@ def _ajustar_regressao_acumulada(
         if n < len(cols):
             continue
         X = np.column_stack(cols)
-        coef, _, _, _ = np.linalg.lstsq(X, y_f, rcond=None)
+        coef = _ajustar_coeficientes_regressao(X, y_f)
         pvals = _ols_pvalues(X, y_f, coef)
         nomes = _nomes(rodada_flag, rodada2_flag, prop_flag, forca_flag, forma_flag)
         termos = [
@@ -1161,11 +1182,10 @@ def _coletar_painel_efeitos_fixos(
                     continue
                 if not np.isfinite(y_val):
                     continue
-            n_casa, n_fora = _contagem_casa_fora_ate(jogos, time, r)
             times_obs.append(time)
             rodadas.append(float(r))
             y_vals.append(y_val)
-            props.append(_proporcao_casa(n_casa, n_fora))
+            props.append(_indicador_casa_jogo(jogo_r, time))
             forcas.append(_forca_oponentes_passados(jogos, time, r + 1, forca_map))
             formas.append(forma_recente_ate(jogos, time, r, jogo_r.hora))
             if context_for_team is not None:
@@ -1380,7 +1400,7 @@ def ajustar_painel_efeitos_fixos(
         nomes.append("Força dos Adversários Passados")
     if flags["usa_prop_casa"]:
         cols.append(prop)
-        nomes.append("Proporção Casa")
+        nomes.append("Indicador casa")
     if flags.get("usa_descanso", True):
         cols.append(descanso)
         nomes.append("Dias de Descanso")
@@ -1415,7 +1435,7 @@ def ajustar_painel_efeitos_fixos(
             nomes.append("Força dos Adversários Passados")
         if flags["usa_prop_casa"]:
             cols.append(prop)
-            nomes.append("Proporção Casa")
+            nomes.append("Indicador casa")
         if flags.get("usa_descanso", True):
             cols.append(descanso)
             nomes.append("Dias de Descanso")
@@ -1433,7 +1453,7 @@ def ajustar_painel_efeitos_fixos(
         usa_int_r = False
         usa_int_r2 = False
 
-    coef = wls_lstsq(X, y, obs_w)
+    coef = _ajustar_coeficientes_regressao(X, y, obs_w)
     pvals = _ols_pvalues(X, y, coef)
     r2_fit = _ols_r2(X, y, coef)
 
@@ -1627,7 +1647,7 @@ def coeficientes_efeitos_fixos_por_time(painel: dict) -> dict[str, dict]:
         if flags["usa_prop_casa"]:
             termos.append(
                 {
-                    "Variável": "Proporção Casa",
+                    "Variável": "Indicador casa",
                     "Beta": round(float(comum["beta_prop_casa"]), 4),
                     "p-valor": comum.get("p_prop_casa"),
                 }
@@ -1765,9 +1785,6 @@ def _contexto_projecao_acumulada(
     forca_map: dict[str, float],
 ) -> tuple[float, float, float, float, str]:
     em_casa = jogo.mand == time
-    prop = _proporcao_casa_ate(
-        jogos, time, jogo.r, em_casa_jogo=em_casa, incluir_proj=True
-    )
     forca = _forca_oponentes_passados(
         jogos, time, jogo.r, forca_map, incluir_proj=True
     )
@@ -1780,7 +1797,7 @@ def _contexto_projecao_acumulada(
         descanso, importante = context_for_team(time, jogo.data)
     except Exception:
         descanso, importante = 7.0, "Não tem"
-    return prop, forca, forma, float(descanso), str(importante)
+    return (1.0 if em_casa else 0.0), forca, forma, float(descanso), str(importante)
 
 
 def regressao_acumulada_beta(
@@ -3638,9 +3655,6 @@ def projetar_estatisticas_por_rodada(
 
     times = times_do_calendario(jogos)
     forca_map = mapa_forca_adversario(jogos, r_ini, r_fim_obs)
-    casa_fora: dict[str, tuple[int, int]] = {
-        t: _contagem_casa_fora_ate(jogos, t, r_fim_obs) for t in times
-    }
     forma_base: dict[str, float] = {}
     forma_geral: dict[str, float] = {}
     for t in times:
@@ -3679,20 +3693,13 @@ def projetar_estatisticas_por_rodada(
         betas_por_col[col] = coeficientes_efeitos_fixos_por_time(painel)
 
     proj_rows: list[dict] = []
-    n_casa_prog = {t: casa_fora[t][0] for t in times}
-    n_fora_prog = {t: casa_fora[t][1] for t in times}
 
     for r in range(r_fim_obs + 1, r_proj_fim + 1):
         horizonte = max(1, r - r_fim_obs)
         w = peso_forma_recente_horizonte(horizonte)
         for t in times:
             jogo_r = jogo_do_time_na_rodada(jogos, t, r)
-            if jogo_r is not None:
-                if jogo_r.mand == t:
-                    n_casa_prog[t] += 1
-                else:
-                    n_fora_prog[t] += 1
-            prop = _proporcao_casa(n_casa_prog[t], n_fora_prog[t])
+            ind_casa = _indicador_casa_jogo(jogo_r, t)
             forca = _forca_oponentes_passados(
                 jogos, t, r_fim_obs + 1, forca_map, incluir_proj=False
             )
@@ -3706,7 +3713,7 @@ def projetar_estatisticas_por_rodada(
                 target = _prever_acumulado(
                     b,
                     r,
-                    prop_casa=prop,
+                    prop_casa=ind_casa,
                     forca_oponentes=forca,
                     forma_recente=forma,
                 )

@@ -14,9 +14,11 @@ sys.path.insert(0, str(ROOT))
 from recency import (
     attach_sample_weights,
     cutoff_date,
+    elastic_net_lstsq,
     exponential_decay_weight,
     filter_jogos_by_recency,
     filter_matches_dataframe,
+    load_regression_settings,
     weighted_mean,
     wls_lstsq,
 )
@@ -88,3 +90,20 @@ def test_attach_sample_weights_column():
     out = attach_sample_weights(df, ref=ref, half_life_days=120)
     assert "sample_weight" in out.columns
     assert out["sample_weight"].iloc[0] > out["sample_weight"].iloc[-1]
+
+
+def test_elastic_net_lstsq_returns_coef_vector():
+    X = np.column_stack([np.ones(40), np.linspace(1, 5, 40), np.random.default_rng(0).normal(size=40)])
+    y = 2.0 + 0.5 * X[:, 1] + np.random.default_rng(1).normal(scale=0.2, size=40)
+    coef = elastic_net_lstsq(X, y)
+    assert coef.shape == (3,)
+    assert coef[1] > 0
+
+
+def test_indicador_casa_dummy():
+    from brasileirao_projecao_core import _indicador_casa_jogo
+
+    j_casa = Jogo(1, "2026-01-01", "", "Flamengo", "Vasco", "1 x 0")
+    j_fora = Jogo(2, "2026-01-08", "", "Vasco", "Flamengo", "0 x 1")
+    assert _indicador_casa_jogo(j_casa, "Flamengo") == 1.0
+    assert _indicador_casa_jogo(j_fora, "Flamengo") == 0.0

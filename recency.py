@@ -9,6 +9,8 @@ import pandas as pd
 
 DEFAULT_HISTORY_YEARS = 3
 DEFAULT_HALF_LIFE_DAYS = 120.0
+DEFAULT_ELASTIC_NET_ALPHA = 0.01
+DEFAULT_ELASTIC_NET_L1_RATIO = 0.5
 
 
 def load_recency_settings(cfg: dict[str, Any] | None = None) -> dict[str, float | int]:
@@ -23,6 +25,25 @@ def load_recency_settings(cfg: dict[str, Any] | None = None) -> dict[str, float 
     return {
         "history_years": int(data.get("max_history_years", DEFAULT_HISTORY_YEARS)),
         "half_life_days": float(data.get("decay_half_life_days", DEFAULT_HALF_LIFE_DAYS)),
+    }
+
+
+def load_regression_settings(cfg: dict[str, Any] | None = None) -> dict[str, float | int]:
+    base = load_recency_settings(cfg)
+    if cfg is None:
+        try:
+            from prob_ml.config import load_config
+
+            cfg = load_config()
+        except Exception:
+            cfg = {}
+    reg = (cfg or {}).get("regression", {})
+    return {
+        **base,
+        "elastic_net_alpha": float(reg.get("elastic_net_alpha", DEFAULT_ELASTIC_NET_ALPHA)),
+        "elastic_net_l1_ratio": float(
+            reg.get("elastic_net_l1_ratio", DEFAULT_ELASTIC_NET_L1_RATIO)
+        ),
     }
 
 
@@ -196,3 +217,56 @@ def wls_lstsq(X: np.ndarray, y: np.ndarray, weights: np.ndarray | None) -> np.nd
     yw = y * sw
     coef, _, _, _ = np.linalg.lstsq(Xw, yw, rcond=None)
     return coef
+
+
+def elastic_net_lstsq(
+    X: np.ndarray,
+    y: np.ndarray,
+    weights: np.ndarray | None = None,
+    *,
+    alpha: float = DEFAULT_ELASTIC_NET_ALPHA,
+    l1_ratio: float = DEFAULT_ELASTIC_NET_L1_RATIO,
+) -> np.ndarray:
+    """Elastic Net; ``X`` inclui coluna de intercepto (uns) quando aplicável."""
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if X.size == 0:
+        return np.array([])
+    n, p = X.shape
+    if n == 0:
+        return np.zeros(p)
+
+    if weights is not None:
+        sw = np.sqrt(np.clip(np.asarray(weights, dtype=float), 1e-12, None))
+        X = X * sw[:, np.newaxis]
+        y = y * sw
+
+    has_intercept = p > 0 and np.allclose(X[:, 0], 1.0)
+    X_fit = X[:, 1:] if has_intercept else X
+
+    if X_fit.shape[1] == 0:
+        intercept = float(np.mean(y)) if has_intercept else 0.0
+        return np.array([intercept]) if has_intercept else np.array([])
+
+    try:
+        from sklearn.linear_model import ElasticNet
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        return wls_lstsq(X, y, None)
+
+    scaler = StandardScaler()
+    Xs = scaler.fit_transform(X_fit)
+    model = ElasticNet(
+        alpha=alpha,
+        l1_ratio=l1_ratio,
+        max_iter=8000,
+        fit_intercept=True,
+    )
+    model.fit(Xs, y)
+    scale = scaler.scale_
+    mean = scaler.mean_
+    coef_feat = model.coef_ / scale
+    intercept = float(model.intercept_ - np.dot(model.coef_, mean / scale))
+    if has_intercept:
+        return np.concatenate([[intercept], coef_feat])
+    return coef_feat

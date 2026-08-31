@@ -23,6 +23,10 @@ data:
   # Histórico: só ano atual + 2 anteriores; peso decai por dias desde a partida
   max_history_years: 3
   decay_half_life_days: 120
+
+regression:
+  elastic_net_alpha: 0.01
+  elastic_net_l1_ratio: 0.5
   # Campeonatos FPT usados no treino de regressão e probabilístico.
   # Médias e repetir 1º turno usam SOMENTE o calendário do Brasileirão.
   fpt_leagues:
