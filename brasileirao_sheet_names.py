@@ -18,8 +18,9 @@ SHEET_METRICAS = "Metricas_Prob"
 SHEET_CONTEXTO = "Base_Contexto"
 SHEET_OVERLAY = "Overlay_Calendario"
 
-LABEL_MEDIA = "Média"
-LABEL_PROB = "Probabilístico"
+# Coluna legada "Janela" → preferir "Seção" (mesmo conteúdo)
+COL_SECAO = "Seção"
+COL_JANELA = "Janela"
 
 SHEETS_MODELO = (
     SHEET_LEIA_ME,

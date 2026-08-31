@@ -76,15 +76,23 @@ from prob_ml.pipeline import train_pipeline  # noqa: E402
 from prob_ml.simulation import result_to_frame, simulate_season  # noqa: E402
 from brasileirao_projecao_core import Jogo  # noqa: E402
 
+from brasileirao_secoes import (
+    LABEL_FE,
+    LABEL_MEDIA,
+    LABEL_PROB,
+    LABEL_TURNO,
+    MODO_PARA_LABEL,
+    SECAO_LABEL,
+    SECOES_ORDEM,
+    modelos_da_secao,
+)
+from brasileirao_sheet_names import COL_SECAO
+
 logger = logging.getLogger("weekly_retrain")
 
-MODELOS_ACUM_JANELAS = ("2025", "ultimas_38_rodadas", "ultimos_3_anos")
-MODELOS_ACUM_MODOS = (
-    ("Regressão FE", "regressao_completa"),
-    ("Kalman", "kalman_acumulada"),
-    ("XGBoost", "xgboost_acumulada"),
-    ("GAM", "gam_acumulada"),
-)
+
+def _row_secao(modelo: str, secao_lbl: str, **extra) -> dict:
+    return {COL_SECAO: secao_lbl, "Janela": secao_lbl, "Modelo": modelo, **extra}
 
 
 def _gerar_modelos_acumulados(
@@ -94,8 +102,8 @@ def _gerar_modelos_acumulados(
     *,
     ano_calendario: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Projeções, resumo e coeficientes para FE/Kalman/XGBoost/GAM × 3 janelas."""
-    from recency import JANELA_TREINO_LABELS, JanelaTreino
+    """Projeções, resumo e coeficientes para todos os modelos × 4 seções."""
+    from recency import JanelaTreino
     from modelos_acumulados import (
         ajustar_modelo_acumulado,
         coeficientes_para_base,
@@ -108,11 +116,15 @@ def _gerar_modelos_acumulados(
     resumo_rows: list[dict] = []
     coef_parts: list[pd.DataFrame] = []
 
-    for janela in MODELOS_ACUM_JANELAS:
+    modos_acum = ("regressao_completa", "kalman_acumulada", "xgboost_acumulada", "gam_acumulada")
+
+    for janela in SECOES_ORDEM:
         janela_t: JanelaTreino = janela  # type: ignore[assignment]
-        janela_lbl = JANELA_TREINO_LABELS[janela_t]
-        for nome, modo in MODELOS_ACUM_MODOS:
-            logger.info("Modelo acumulado: %s | janela=%s", nome, janela_lbl)
+        secao_lbl = SECAO_LABEL[janela_t]
+        for nome, modo in modelos_da_secao(janela_t):
+            if modo not in modos_acum and modo != "repetir_turno":
+                continue
+            logger.info("Modelo acumulado: %s | seção=%s", nome, secao_lbl)
             try:
                 _, log_df = aplicar_projecoes(
                     jogos,
@@ -125,25 +137,38 @@ def _gerar_modelos_acumulados(
                 )
                 for _, row in log_df.iterrows():
                     proj_rows.append(
-                        {
-                            "Modelo": nome,
-                            "Janela": janela_lbl,
-                            "Rodada": row.get("Rodada"),
-                            "Mandante": row.get("Mandante"),
-                            "Visitante": row.get("Visitante"),
-                            "Proj": row.get("Proj"),
-                        }
+                        _row_secao(
+                            nome,
+                            secao_lbl,
+                            Rodada=row.get("Rodada"),
+                            Mandante=row.get("Mandante"),
+                            Visitante=row.get("Visitante"),
+                            Proj=row.get("Proj"),
+                        )
                     )
-                if modo == "regressao_completa":
+                if modo == "repetir_turno":
+                    n_turno = len([j for j in jogos if j.r <= 19 and j.jogado])
+                    resumo_rows.append(
+                        _row_secao(
+                            nome,
+                            secao_lbl,
+                            **{"N observações": n_turno, "R²": None},
+                        )
+                    )
+                elif modo == "regressao_completa":
                     coef_df = exportar_coefs_regressao_fe(
                         jogos,
                         r_ini,
                         r_fim,
                         janela_t,
                         ano_calendario=ano_calendario,
-                        janela_lbl=janela_lbl,
+                        janela_lbl=secao_lbl,
+                        nome_modelo=LABEL_FE,
                     )
                     if coef_df is not None and not coef_df.empty:
+                        coef_df = coef_df.copy()
+                        coef_df[COL_SECAO] = secao_lbl
+                        coef_df["Janela"] = secao_lbl
                         coef_parts.append(coef_df)
                     coefs = tabela_regressao_acumulada_resumo(
                         jogos,
@@ -157,12 +182,14 @@ def _gerar_modelos_acumulados(
                     if coefs is not None and not coefs.empty and "R²" in coefs.columns:
                         r2_val = coefs["R²"].iloc[0]
                     resumo_rows.append(
-                        {
-                            "Modelo": nome,
-                            "Janela": janela_lbl,
-                            "N observações": coefs.shape[0] if coefs is not None else 0,
-                            "R²": r2_val,
-                        }
+                        _row_secao(
+                            nome,
+                            secao_lbl,
+                            **{
+                                "N observações": coefs.shape[0] if coefs is not None else 0,
+                                "R²": r2_val,
+                            },
+                        )
                     )
                 else:
                     tipo = modo.replace("_acumulada", "")
@@ -170,30 +197,33 @@ def _gerar_modelos_acumulados(
                         jogos, janela_t, ano_calendario=ano_calendario
                     )
                     modelo = ajustar_modelo_acumulado(painel, tipo, janela_t)  # type: ignore[arg-type]
-                    cbase = coeficientes_para_base(modelo, nome, janela_lbl)
+                    cbase = coeficientes_para_base(modelo, nome, secao_lbl)
                     if cbase is not None and not cbase.empty:
+                        cbase = cbase.copy()
+                        cbase[COL_SECAO] = secao_lbl
+                        cbase["Janela"] = secao_lbl
                         coef_parts.append(cbase)
                     resumo = tabela_resumo_modelo(modelo)
                     n_obs = resumo.loc[resumo["Campo"] == "N observações", "Valor"]
                     r2 = resumo.loc[resumo["Campo"] == "R²", "Valor"]
                     resumo_rows.append(
-                        {
-                            "Modelo": nome,
-                            "Janela": janela_lbl,
-                            "N observações": n_obs.iloc[0] if len(n_obs) else None,
-                            "R²": r2.iloc[0] if len(r2) else None,
-                        }
+                        _row_secao(
+                            nome,
+                            secao_lbl,
+                            **{
+                                "N observações": n_obs.iloc[0] if len(n_obs) else None,
+                                "R²": r2.iloc[0] if len(r2) else None,
+                            },
+                        )
                     )
             except Exception as e:
-                logger.warning("Falha %s / %s: %s", nome, janela_lbl, e)
+                logger.warning("Falha %s / %s: %s", nome, secao_lbl, e)
                 resumo_rows.append(
-                    {
-                        "Modelo": nome,
-                        "Janela": janela_lbl,
-                        "N observações": None,
-                        "R²": None,
-                        "Erro": str(e)[:200],
-                    }
+                    _row_secao(
+                        nome,
+                        secao_lbl,
+                        **{"N observações": None, "R²": None, "Erro": str(e)[:200]},
+                    )
                 )
 
     coefs_all = (
@@ -255,17 +285,16 @@ def _gerar_media_prob_janelas(
     pd.DataFrame,
     pd.DataFrame | None,
 ]:
-    """Média + Probabilístico × 3 janelas → projeções, resumo, coefs, classif, forecasts."""
+    """Média + Probabilístico × 4 seções → projeções, resumo, coefs, classif, forecasts."""
     import json
 
-    from recency import JANELA_TREINO_LABELS, JanelaTreino
+    from recency import JanelaTreino
     from brasileirao_projecao_core import (
         aplicar_projecoes,
         export_medias_para_base,
         jogos_treino_por_janela,
         stats_acumuladas_ate,
     )
-    from brasileirao_sheet_names import LABEL_MEDIA, LABEL_PROB
     from prob_ml.config import budget_n_sims
     from prob_ml.context_calendar import context_for_team
     from prob_ml.offline import forecast_calendar_games
@@ -284,10 +313,10 @@ def _gerar_media_prob_janelas(
     cal_prob_ref = pd.DataFrame()
     standings_ref = None
 
-    for janela in MODELOS_ACUM_JANELAS:
+    for janela in SECOES_ORDEM:
         janela_t: JanelaTreino = janela  # type: ignore[assignment]
-        janela_lbl = JANELA_TREINO_LABELS[janela_t]
-        logger.info("Média + Prob | janela=%s", janela_lbl)
+        secao_lbl = SECAO_LABEL[janela_t]
+        logger.info("Média + Prob | seção=%s", secao_lbl)
 
         try:
             _, log_media = aplicar_projecoes(
@@ -301,27 +330,39 @@ def _gerar_media_prob_janelas(
             )
             if not log_media.empty:
                 media_df = log_media.copy()
-                media_df.insert(0, "Janela", janela_lbl)
+                media_df.insert(0, COL_SECAO, secao_lbl)
+                media_df.insert(0, "Janela", secao_lbl)
                 media_df.insert(0, "Modelo", LABEL_MEDIA)
-                proj_parts.append(media_df[["Modelo", "Janela", "Rodada", "Mandante", "Visitante", "Proj"]])
+                proj_parts.append(
+                    media_df[
+                        ["Modelo", COL_SECAO, "Janela", "Rodada", "Mandante", "Visitante", "Proj"]
+                    ]
+                )
             n_media = len(
                 jogos_treino_por_janela(jogos, janela_t, ano_calendario=ano_calendario)
             )
             resumo_parts.append(
-                {
-                    "Modelo": LABEL_MEDIA,
-                    "Janela": janela_lbl,
-                    "N observações": n_media,
-                    "R²": None,
-                }
+                _row_secao(
+                    LABEL_MEDIA,
+                    secao_lbl,
+                    **{"N observações": n_media, "R²": None},
+                )
             )
             coef_m = export_medias_para_base(
-                jogos, r_ini, r_fim, janela_t, janela_lbl, ano_calendario=ano_calendario
+                jogos,
+                r_ini,
+                r_fim,
+                janela_t,
+                secao_lbl,
+                ano_calendario=ano_calendario,
+                nome_modelo=LABEL_MEDIA,
             )
             if coef_m is not None and not coef_m.empty:
+                coef_m = coef_m.copy()
+                coef_m[COL_SECAO] = secao_lbl
                 coef_parts.append(coef_m)
         except Exception as e:
-            logger.warning("Média / %s: %s", janela_lbl, e)
+            logger.warning("Média / %s: %s", secao_lbl, e)
 
         try:
             matches_j = _matches_para_janela(
@@ -341,14 +382,14 @@ def _gerar_media_prob_janelas(
                 except Exception:
                     dh, ih, da, ia = 7.0, "Não tem", 7.0, "Não tem"
                 prob_rows.append(
-                    {
-                        "Modelo": LABEL_PROB,
-                        "Janela": janela_lbl,
-                        "Rodada": p["round"],
-                        "Mandante": p["home_team"],
-                        "Visitante": p["away_team"],
-                        "Proj": f"{p['xpts_home']:.2f} / {p['xpts_away']:.2f}",
-                    }
+                    _row_secao(
+                        LABEL_PROB,
+                        secao_lbl,
+                        Rodada=p["round"],
+                        Mandante=p["home_team"],
+                        Visitante=p["away_team"],
+                        Proj=f"{p['xpts_home']:.2f} / {p['xpts_away']:.2f}",
+                    )
                 )
                 if janela_t == "ultimas_38_rodadas":
                     legacy_cal.append(
@@ -394,7 +435,8 @@ def _gerar_media_prob_janelas(
                 )
                 standings_j = result_to_frame(res)
                 st_df = standings_j.copy()
-                st_df.insert(0, "Janela", janela_lbl)
+                st_df.insert(0, COL_SECAO, secao_lbl)
+                st_df.insert(0, "Janela", secao_lbl)
                 st_df.insert(0, "Modelo", LABEL_PROB)
                 classif_parts.append(st_df)
 
@@ -404,12 +446,11 @@ def _gerar_media_prob_janelas(
                 ens = metrics.get("ensemble") or {}
                 ens_r2 = ens.get("r2") or ens.get("R2")
             resumo_parts.append(
-                {
-                    "Modelo": LABEL_PROB,
-                    "Janela": janela_lbl,
-                    "N observações": len(matches_j),
-                    "R²": ens_r2,
-                }
+                _row_secao(
+                    LABEL_PROB,
+                    secao_lbl,
+                    **{"N observações": len(matches_j), "R²": ens_r2},
+                )
             )
 
             fc_rows = []
@@ -417,7 +458,8 @@ def _gerar_media_prob_janelas(
                 fc_rows.append(
                     {
                         "Modelo": LABEL_PROB,
-                        "Janela": janela_lbl,
+                        COL_SECAO: secao_lbl,
+                        "Janela": secao_lbl,
                         "round": p.get("round"),
                         "date": p.get("date"),
                         "home_team": p["home_team"],
@@ -443,15 +485,13 @@ def _gerar_media_prob_janelas(
                 cal_prob_ref = pd.DataFrame(legacy_cal)
                 standings_ref = standings_j
         except Exception as e:
-            logger.warning("Prob / %s: %s", janela_lbl, e)
+            logger.warning("Prob / %s: %s", secao_lbl, e)
             resumo_parts.append(
-                {
-                    "Modelo": LABEL_PROB,
-                    "Janela": janela_lbl,
-                    "N observações": None,
-                    "R²": None,
-                    "Erro": str(e)[:200],
-                }
+                _row_secao(
+                    LABEL_PROB,
+                    secao_lbl,
+                    **{"N observações": None, "R²": None, "Erro": str(e)[:200]},
+                )
             )
 
     proj_all = pd.concat(proj_parts, ignore_index=True) if proj_parts else pd.DataFrame()
@@ -748,7 +788,7 @@ def main() -> int:
         "fingerprint": bundle.status.dataset_fingerprint,
         "runtime_sec": bundle.status.runtime_sec,
         "context_vars": "dias_descanso + jogos_importantes",
-        "modelos_acumulados": "FE + Kalman + XGBoost + GAM + Média + Prob × 3 janelas",
+        "modelos_acumulados": "7 modelos × 4 seções (Só 2026 / 38 rod. / 3 anos / base completa)",
     }
     # Destinos: dados/ (junto ao calendário) + entrega + Downloads
     destinos = [

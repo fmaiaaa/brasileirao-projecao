@@ -18,7 +18,14 @@ from recency import (
     parse_match_date,
     weights_for_panel_rounds,
 )
-from brasileirao_sheet_names import LABEL_MEDIA, LABEL_PROB
+from brasileirao_secoes import (
+    LABEL_FE,
+    LABEL_KALMAN,
+    LABEL_XGB,
+    LABEL_GAM,
+    MODO_PARA_LABEL,
+    usa_features_serie_ab,
+)
 
 TipoModeloAcumulado = Literal["kalman", "xgboost", "gam"]
 
@@ -41,21 +48,10 @@ COPA_COL_MAP = {
 }
 
 NOME_MODELO_ACUMULADO: dict[TipoModeloAcumulado, str] = {
-    "kalman": "Kalman / espaço de estados",
-    "xgboost": "XGBoost",
-    "gam": "GAM",
+    "kalman": LABEL_KALMAN,
+    "xgboost": LABEL_XGB,
+    "gam": LABEL_GAM,
 }
-
-MODO_PARA_LABEL: dict[str, str] = {
-    "regressao_completa": "Regressão FE",
-    "kalman_acumulada": "Kalman",
-    "xgboost_acumulada": "XGBoost",
-    "gam_acumulada": "GAM",
-    "media_simples": "Média",
-    "prob_ml": "Probabilístico",
-}
-
-# Alias legado — preferir brasileirao_sheet_names
 
 
 @dataclass
@@ -109,8 +105,11 @@ def montar_matriz_features(
     descanso: np.ndarray,
     importantes: list[str],
     times_ref: list[str],
+    *,
+    comp_serie_a: np.ndarray | None = None,
+    usar_interacao_serie: bool = False,
 ) -> tuple[np.ndarray, list[str]]:
-    """Design matrix: time FE + mesmas variáveis da regressão completa."""
+    """Design matrix: time FE + variáveis + opcional Série A/B e interação time×série."""
     r = np.asarray(rodadas, dtype=float)
     team = _encode_team_dummies(times_obs, times_ref)
     base = np.column_stack(
@@ -128,8 +127,16 @@ def montar_matriz_features(
         for col, val in _importante_para_colunas(imp).items():
             j = COPA_COLS.index(col)
             copa[i, j] = val
-    X = np.column_stack([team, base, copa])
-    names = [f"FE[{t}]" for t in times_ref] + list(CONTINUOUS_FEATURES) + COPA_COLS
+    parts = [team]
+    names = [f"FE[{t}]" for t in times_ref]
+    if usar_interacao_serie and comp_serie_a is not None:
+        comp = np.asarray(comp_serie_a, dtype=float).reshape(-1, 1)
+        team_x = team * comp
+        parts.extend([comp, team_x])
+        names.extend(["comp_serie_a"] + [f"FE[{t}]*serie_a" for t in times_ref])
+    parts.extend([base, copa])
+    names.extend(list(CONTINUOUS_FEATURES) + COPA_COLS)
+    X = np.column_stack(parts)
     return X, names
 
 
@@ -168,6 +175,11 @@ def coletar_painel_treino(
     importante_l: list[str] = []
     datas_l: list[str] = []
 
+    comp_l: list[float] = []
+    blocos_flat: list = []
+    for bloco in blocos:
+        blocos_flat.extend(bloco or [])
+
     for bloco in blocos:
         if not bloco:
             continue
@@ -186,6 +198,15 @@ def coletar_painel_treino(
         descanso_l.extend(d_b.tolist())
         importante_l.extend(i_b)
         datas_l.extend(dt_b)
+
+    from brasileirao_projecao_core import _comp_serie_a_jogo, jogo_do_time_na_rodada
+
+    for t, rv, d in zip(times_obs_l, r_l, datas_l):
+        comp = 1.0
+        jr = jogo_do_time_na_rodada(blocos_flat, t, int(rv))
+        if jr is not None:
+            comp = _comp_serie_a_jogo(jr)
+        comp_l.append(comp)
 
     times_ref = list(cal_teams)
     for t in sorted(set(times_obs_l)):
@@ -215,6 +236,8 @@ def coletar_painel_treino(
         np.array(descanso_l),
         importante_l,
         times_ref,
+        comp_serie_a=np.array(comp_l, dtype=float),
+        usar_interacao_serie=usa_features_serie_ab(janela),
     )
     w = weights_for_panel_rounds(
         r_l,
@@ -502,6 +525,8 @@ def exportar_coefs_regressao_fe(
     janela_lbl: str,
     nome_modelo: str = "Regressão FE",
 ) -> pd.DataFrame:
+    from brasileirao_sheet_names import COL_SECAO
+    from brasileirao_secoes import LABEL_FE
     from brasileirao_projecao_core import (
         ajustar_painel_efeitos_fixos,
         coeficientes_efeitos_fixos_por_time,
@@ -524,7 +549,8 @@ def exportar_coefs_regressao_fe(
         for term in b.get("termos", []):
             rows.append(
                 {
-                    "Modelo": nome_modelo,
+                    "Modelo": nome_modelo or LABEL_FE,
+                    COL_SECAO: janela_lbl,
                     "Janela": janela_lbl,
                     "Time": time,
                     "Variável": term.get("Variável"),
@@ -603,10 +629,10 @@ def aplicar_projecoes_modelo_acumulado(
                 stats_acumuladas_ate(jogos, t, r, so_realizados=True).pts
             )
 
+    from recency import JANELA_TREINO_LABELS
+
     label = NOME_MODELO_ACUMULADO[tipo]
-    janela_lbl = {"2025": "2025", "ultimas_38_rodadas": "38 rod.", "ultimos_3_anos": "3 anos"}[
-        janela
-    ]
+    janela_lbl = JANELA_TREINO_LABELS.get(janela, str(janela))
     origem = f"{label} ({janela_lbl})"
     log_rows: list[dict] = []
     rodadas_pendentes = sorted({j.r for j in jogos if not j.jogado})

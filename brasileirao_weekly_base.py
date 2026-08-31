@@ -25,9 +25,8 @@ _ROOT = Path(__file__).resolve().parent
 _DADOS = _ROOT / "dados"
 _ENTREGA = _ROOT / "artifacts" / "entrega"
 
+from brasileirao_secoes import LABEL_MEDIA, LABEL_PROB
 from brasileirao_sheet_names import (
-    LABEL_MEDIA,
-    LABEL_PROB,
     MODELOS_XLSX_NAME,
     SHEET_CLASSIF_MODELOS,
     SHEET_CLASSIF_PROB,
@@ -151,60 +150,100 @@ def load_regressao_coefs() -> pd.DataFrame | None:
     return df
 
 
+# Aliases legados (bases geradas antes da reestruturação)
+_MODELO_ALIASES = {
+    "Média": LABEL_MEDIA,
+    "Kalman": "Modelo de Kalman (Espaço de Estados)",
+    "Regressão FE": "Regressão FE",
+}
+_SECAO_ALIASES = {
+    "Só 2025": "Só 2026",
+    "2025": "Só 2026",
+}
+
+
 def _filtrar_modelo_janela(
     df: pd.DataFrame | None,
     *,
     modelo: str | None = None,
     janela: str | None = None,
+    secao: str | None = None,
 ) -> pd.DataFrame | None:
     if df is None or df.empty:
         return None
     out = df.copy()
+    sec = secao or janela
+    if sec:
+        sec = _SECAO_ALIASES.get(str(sec).strip(), str(sec).strip())
+    if modelo:
+        modelo = _MODELO_ALIASES.get(str(modelo).strip(), str(modelo).strip())
     if modelo and "Modelo" in out.columns:
         out = out[out["Modelo"].astype(str).str.strip() == str(modelo).strip()]
-    if janela and "Janela" in out.columns:
-        out = out[out["Janela"].astype(str).str.strip() == str(janela).strip()]
+    if sec:
+        if "Seção" in out.columns:
+            out = out[out["Seção"].astype(str).str.strip() == str(sec).strip()]
+        elif "Janela" in out.columns:
+            out = out[out["Janela"].astype(str).str.strip() == str(sec).strip()]
     return out if not out.empty else None
 
 
 def load_projecoes_modelos_acum(
     modelo: str | None = None,
     janela: str | None = None,
+    *,
+    secao: str | None = None,
 ) -> pd.DataFrame | None:
-    """Projeções pré-calculadas (FE / Kalman / XGBoost / GAM × janela)."""
-    return _filtrar_modelo_janela(load_sheet(SHEET_PROJ_MODELOS), modelo=modelo, janela=janela)
+    """Projeções pré-calculadas por modelo e seção."""
+    return _filtrar_modelo_janela(
+        load_sheet(SHEET_PROJ_MODELOS),
+        modelo=modelo,
+        janela=janela,
+        secao=secao,
+    )
 
 
 def load_coefs_modelos_acum(
     modelo: str | None = None,
     janela: str | None = None,
+    *,
+    secao: str | None = None,
 ) -> pd.DataFrame | None:
-    """Coeficientes serializados na base — app só exibe, não reestima."""
-    return _filtrar_modelo_janela(load_sheet(SHEET_COEFS_MODELOS), modelo=modelo, janela=janela)
+    return _filtrar_modelo_janela(
+        load_sheet(SHEET_COEFS_MODELOS), modelo=modelo, janela=janela, secao=secao
+    )
 
 
 def load_resumo_modelos_acum(
     modelo: str | None = None,
     janela: str | None = None,
+    *,
+    secao: str | None = None,
 ) -> pd.DataFrame | None:
-    """R² e N observações por modelo/janela."""
-    return _filtrar_modelo_janela(load_sheet(SHEET_RESUMO_MODELOS), modelo=modelo, janela=janela)
+    return _filtrar_modelo_janela(
+        load_sheet(SHEET_RESUMO_MODELOS), modelo=modelo, janela=janela, secao=secao
+    )
 
 
 def load_classif_modelos_acum(
     modelo: str | None = None,
     janela: str | None = None,
+    *,
+    secao: str | None = None,
 ) -> pd.DataFrame | None:
-    """Classificação MC por modelo/janela (ex.: Probabilístico)."""
-    return _filtrar_modelo_janela(load_sheet(SHEET_CLASSIF_MODELOS), modelo=modelo, janela=janela)
+    return _filtrar_modelo_janela(
+        load_sheet(SHEET_CLASSIF_MODELOS), modelo=modelo, janela=janela, secao=secao
+    )
 
 
 def load_forecasts_modelos_acum(
     modelo: str | None = None,
     janela: str | None = None,
+    *,
+    secao: str | None = None,
 ) -> pd.DataFrame | None:
-    """Previsões de placar por modelo/janela."""
-    return _filtrar_modelo_janela(load_sheet(SHEET_FORECASTS_MODELOS), modelo=modelo, janela=janela)
+    return _filtrar_modelo_janela(
+        load_sheet(SHEET_FORECASTS_MODELOS), modelo=modelo, janela=janela, secao=secao
+    )
 
 
 def load_prob_projecoes() -> pd.DataFrame | None:

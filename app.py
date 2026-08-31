@@ -56,7 +56,13 @@ from brasileirao_weekly_base import (
     load_resumo_modelos_acum,
 )
 from recency import JANELA_TREINO_LABELS, JanelaTreino
-from brasileirao_sheet_names import LABEL_MEDIA, LABEL_PROB
+from brasileirao_secoes import (
+    LABEL_MEDIA,
+    LABEL_PROB,
+    SECAO_LABEL,
+    SECOES_ORDEM,
+    modelos_da_secao,
+)
 from modelos_acumulados import MODO_PARA_LABEL
 
 _PLOTLY_CONFIG = {
@@ -398,409 +404,373 @@ _ult_r_proj = (
     else 1
 )
 
-titulo_secao("Configuração da projeção")
-st.caption(f"Projeções usam o calendário {_ANO_CALENDARIO} (planilha de resultados).")
+titulo_secao("Projeção")
+st.caption(
+    f"Calendário {_ANO_CALENDARIO}. Treino e projeção usam somente dados de 2026 "
+    "na seção «Só 2026»; demais seções incluem histórico com decaimento de peso "
+    "e dummy Série A/B + interação time×série."
+)
 
 r_ini_proj = 1
 r_fim_proj = int(min(_ult_r_proj, 38))
 
-_MODO_ACUM = (
-    "Pontos acumulados — modelos completos "
-    "(FE / Kalman / XGBoost / GAM)"
-)
-_MODO_MEDIA = "Média casa x fora × forma recente"
-_MODO_TURNO = "Repetir 1º turno"
-_MODO_PROB = (
-    "Probabilístico (placar) - ensemble temporal "
-    "(Poisson / Dixon-Coles / Elo / GLM / Elastic Net)"
-)
 
-_modo_opcoes = [
-    _MODO_TURNO,
-    _MODO_MEDIA,
-    _MODO_ACUM,
-    _MODO_PROB,
-]
-modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
+def _fmt_r2_ui(v):
+    if v is None or str(v).strip() == "":
+        return ""
+    s = str(v).strip().lstrip("'")
+    try:
+        x = float(s.replace(",", "."))
+    except (TypeError, ValueError):
+        return s
+    if x > 1.0:
+        digits = "".join(ch for ch in s if ch.isdigit())
+        if digits:
+            x = float("0." + digits[:4].ljust(4, "0")[:4])
+    return f"{x:.4f}"
 
-modo: ModoProjecao
-tipo: TipoRegressao = "mandante_visitante"
-janela_treino: JanelaTreino = "ultimas_38_rodadas"
-_prob_preds: list = []
-_prob_sim_df = None
 
-if modo_label == _MODO_TURNO:
-    modo = "repetir_turno"
-else:
-    _janela_label = st.radio(
-        "Janela de treino",
-        options=list(JANELA_TREINO_LABELS.values()),
-        index=1,
+def _render_bloco_projecao(
+    secao_key: JanelaTreino,
+    secao_lbl: str,
+    *,
+    key_prefix: str,
+) -> None:
+    modelos = modelos_da_secao(secao_key)
+    modelo_lbl = st.radio(
+        "Modelo",
+        options=[m[0] for m in modelos],
         horizontal=True,
-        help="Define quais jogos entram no treino de cada modelo (exceto Repetir 1º turno).",
+        key=f"{key_prefix}_modelo",
     )
-    janela_treino = next(
-        k for k, v in JANELA_TREINO_LABELS.items() if v == _janela_label
-    )
-    if modo_label.startswith("Pontos acumulados"):
-        _sub_modelo = st.radio(
-            "Modelo",
-            options=[
-                "Regressão FE (completa)",
-                "Kalman / espaço de estados",
-                "XGBoost",
-                "GAM",
-            ],
-            index=0,
-            horizontal=True,
-        )
-        if _sub_modelo.startswith("Regressão"):
-            modo = "regressao_completa"
-        elif _sub_modelo.startswith("Kalman"):
-            modo = "kalman_acumulada"
-        elif _sub_modelo.startswith("XGBoost"):
-            modo = "xgboost_acumulada"
-        else:
-            modo = "gam_acumulada"
-    elif modo_label == _MODO_MEDIA:
-        modo = "media_simples"
-    elif modo_label == _MODO_PROB:
-        modo = "prob_ml"
-    else:
-        modo = "repetir_turno"
+    modo = next(m[1] for m in modelos if m[0] == modelo_lbl)
 
-_janela_lbl = JANELA_TREINO_LABELS[janela_treino]
-
-with st.expander("Detalhes do modelo"):
-    if modo_e_regressao_acumulada(modo):
-        _modelo_lbl = MODO_PARA_LABEL.get(modo, modo)
-        st.caption(
-            f"Coeficientes e projeções da base semanal (job de segunda 03:00). "
-            f"Modelo: {_modelo_lbl} · Janela: {_janela_lbl}. "
-            "Pesos de importância: últimas 5 rodadas 100→90%; "
-            "6ª até 1ª rodada 90→25%; anos passados 25→0% (conforme janela)."
-        )
-        _resumo = load_resumo_modelos_acum(_modelo_lbl, _janela_lbl)
-        if _resumo is not None and not _resumo.empty:
+    with st.expander("Detalhes do modelo"):
+        if modo_e_regressao_acumulada(modo):
             st.caption(
-                f"R² = {_resumo.iloc[0].get('R²', '—')} · "
-                f"N obs = {_resumo.iloc[0].get('N observações', '—')}"
+                f"Coeficientes e projeções da base semanal · {secao_lbl}. "
+                "Pesos: últimas 5 rodadas 100→90%; temporada 90→25%; anos passados 25→0%."
             )
-        _coefs = load_coefs_modelos_acum(_modelo_lbl, _janela_lbl)
-        if _coefs is not None and not _coefs.empty:
-            _coefs_show = _coefs.copy()
-            for _c in list(_coefs_show.columns):
-                if str(_c).strip().lower().replace("²", "2") in {"r2", "r²"}:
-                    def _fmt_r2_ui(v):
-                        if v is None or str(v).strip() == "":
-                            return ""
-                        s = str(v).strip().lstrip("'")
-                        try:
-                            x = float(s.replace(",", "."))
-                        except (TypeError, ValueError):
-                            return s
-                        if x > 1.0:
-                            digits = "".join(ch for ch in s if ch.isdigit())
-                            if digits:
-                                x = float("0." + digits[:4].ljust(4, "0")[:4])
-                        return f"{x:.4f}"
-
-                    _coefs_show[_c] = _coefs_show[_c].map(_fmt_r2_ui)
-                    break
+            _resumo = load_resumo_modelos_acum(modelo_lbl, secao=secao_lbl)
+            if _resumo is not None and not _resumo.empty:
+                st.caption(
+                    f"R² = {_resumo.iloc[0].get('R²', '—')} · "
+                    f"N obs = {_resumo.iloc[0].get('N observações', '—')}"
+                )
+            _coefs = load_coefs_modelos_acum(modelo_lbl, secao=secao_lbl)
+            if _coefs is not None and not _coefs.empty:
+                _coefs_show = _coefs.copy()
+                for _c in list(_coefs_show.columns):
+                    if str(_c).strip().lower().replace("²", "2") in {"r2", "r²"}:
+                        _coefs_show[_c] = _coefs_show[_c].map(_fmt_r2_ui)
+                        break
+                _tabela(
+                    _coefs_show,
+                    column_config={
+                        "Time": st.column_config.TextColumn("Time", pinned="left"),
+                        "Variável": st.column_config.TextColumn("Variável"),
+                        "Beta": st.column_config.NumberColumn("Beta", format="%.4f"),
+                    },
+                    key=f"{key_prefix}_coef_reg",
+                )
+            else:
+                st.info(
+                    "Coeficientes ainda não disponíveis na base. "
+                    "Aguarde o job semanal ou execute scripts/weekly_retrain.py."
+                )
+        elif modo == "media_simples":
+            st.caption(
+                f"Médias e projeções da base semanal · {secao_lbl}. "
+                "Projeção = média pts/jogo × fator de forma."
+            )
+            _resumo = load_resumo_modelos_acum(LABEL_MEDIA, secao=secao_lbl)
+            if _resumo is not None and not _resumo.empty:
+                st.caption(
+                    f"N obs treino = {_resumo.iloc[0].get('N observações', '—')}"
+                )
+            _coefs = load_coefs_modelos_acum(LABEL_MEDIA, secao=secao_lbl)
+            if _coefs is not None and not _coefs.empty:
+                _tabela(
+                    _coefs,
+                    column_config={
+                        "Time": st.column_config.TextColumn("Time", pinned="left"),
+                        "Variável": st.column_config.TextColumn("Variável"),
+                        "Beta": st.column_config.NumberColumn("Valor", format="%.3f"),
+                    },
+                    key=f"{key_prefix}_coef_media",
+                )
+            else:
+                st.info("Médias por time ainda não disponíveis na base para esta seção.")
+        elif modo == "prob_ml":
+            st.caption(f"Previsões e Monte Carlo da base semanal · {secao_lbl}.")
+            _resumo = load_resumo_modelos_acum(LABEL_PROB, secao=secao_lbl)
+            if _resumo is not None and not _resumo.empty:
+                st.caption(
+                    f"N obs treino = {_resumo.iloc[0].get('N observações', '—')} · "
+                    f"R² ensemble = {_resumo.iloc[0].get('R²', '—')}"
+                )
+            _met = load_prob_metricas()
+            if _met is not None and not _met.empty and secao_key == "ultimas_38_rodadas":
+                st.caption("Métricas OOF (referência — Últimas 38 rodadas):")
+                _tabela(_met, key=f"{key_prefix}_metricas_prob")
+        else:
+            st.caption(
+                "Espelha o 1º turno deste Brasileirão (somente jogos de 2026); "
+                "sem par, usa média casa/fora × forma recente."
+            )
             _tabela(
-                _coefs_show,
-                column_config={
-                    "Time": st.column_config.TextColumn("Time", pinned="left"),
-                    "Variável": st.column_config.TextColumn("Variável"),
-                    "Beta": st.column_config.NumberColumn("Beta", format="%.4f"),
-                },
-                key="tbl_reg",
+                tabela_jogos_primeiro_turno(_jogos_base),
+                key=f"{key_prefix}_tbl_turno",
             )
+
+    _prob_preds: list = []
+    _prob_sim_df = None
+
+    if modo == "prob_ml":
+        _cal = load_projecoes_modelos_acum(LABEL_PROB, secao=secao_lbl)
+        _stand = load_classif_modelos_acum(LABEL_PROB, secao=secao_lbl)
+        _fc = load_forecasts_modelos_acum(LABEL_PROB, secao=secao_lbl)
+        if _cal is None or _cal.empty:
+            st.warning(
+                f"Projeções probabilísticas ({secao_lbl}) não encontradas na base. "
+                "Execute o job semanal."
+            )
+            jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
+            df_log = pd.DataFrame()
         else:
-            st.info(
-                "Coeficientes ainda não disponíveis na base. "
-                "Aguarde o job semanal ou execute scripts/weekly_retrain.py."
+            jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+                _jogos_base,
+                _cal,
+                r_ini=r_ini_proj,
+                r_fim=r_fim_proj,
+                origem=f"prob_ml/{secao_lbl}",
             )
-    elif modo == "media_simples":
-        st.caption(
-            f"Médias e projeções da base semanal · Janela: {_janela_lbl}. "
-            "Projeção = média pts/jogo em casa ou fora × fator de forma."
-        )
-        _resumo = load_resumo_modelos_acum(LABEL_MEDIA, _janela_lbl)
-        if _resumo is not None and not _resumo.empty:
-            st.caption(
-                f"N obs treino = {_resumo.iloc[0].get('N observações', '—')}"
+        if _stand is not None and not _stand.empty:
+            _prob_sim_df = _stand.drop(
+                columns=["Modelo", "Seção", "Janela"], errors="ignore"
             )
-        _coefs = load_coefs_modelos_acum(LABEL_MEDIA, _janela_lbl)
-        if _coefs is not None and not _coefs.empty:
-            _tabela(
-                _coefs,
-                column_config={
-                    "Time": st.column_config.TextColumn("Time", pinned="left"),
-                    "Variável": st.column_config.TextColumn("Variável"),
-                    "Beta": st.column_config.NumberColumn("Valor", format="%.3f"),
-                },
-                key="tbl_media",
-            )
-        else:
-            st.info("Médias por time ainda não disponíveis na base para esta janela.")
-    elif modo == "prob_ml":
-        st.caption(
-            f"Previsões e Monte Carlo da base semanal · Janela: {_janela_lbl}."
-        )
-        _resumo = load_resumo_modelos_acum(LABEL_PROB, _janela_lbl)
-        if _resumo is not None and not _resumo.empty:
-            st.caption(
-                f"N obs treino = {_resumo.iloc[0].get('N observações', '—')} · "
-                f"R² ensemble = {_resumo.iloc[0].get('R²', '—')}"
-            )
-        _met = load_prob_metricas()
-        if _met is not None and not _met.empty and janela_treino == "ultimas_38_rodadas":
-            st.caption("Métricas OOF (referência — janela Últimas 38 rodadas):")
-            _tabela(_met, key="tbl_metricas_prob")
-    else:
-        st.caption(
-            "Jogos do 1º turno deste Brasileirão usados como referência para espelhar a volta "
-            "(não usa outros campeonatos); "
-            "sem par já disputado, usa média casa/fora × forma recente "
-            "(com o mesmo decaimento de peso da forma)."
-        )
-        _tabela(tabela_jogos_primeiro_turno(_jogos_base), key="tbl_turno")
+        if _fc is not None and not _fc.empty:
+            pend_pairs = {(j.mand, j.vis) for j in _jogos_base if not j.jogado}
+            _prob_preds = [
+                p
+                for p in _fc.to_dict(orient="records")
+                if (
+                    str(p.get("home_team") or p.get("Mandante") or ""),
+                    str(p.get("away_team") or p.get("Visitante") or ""),
+                )
+                in pend_pairs
+            ]
+            from prob_ml.integration import _safe_float as _sf
 
-if modo == "prob_ml":
-    _cal = load_projecoes_modelos_acum(LABEL_PROB, _janela_lbl)
-    _stand = load_classif_modelos_acum(LABEL_PROB, _janela_lbl)
-    _fc = load_forecasts_modelos_acum(LABEL_PROB, _janela_lbl)
+            for p in _prob_preds:
+                p["xg_home"] = _sf(p.get("xg_home"), 0.0) or 0.0
+                p["xg_away"] = _sf(p.get("xg_away"), 0.0) or 0.0
+                p["p_home"] = _sf(p.get("p_home"), 0.0) or 0.0
+                p["p_draw"] = _sf(p.get("p_draw"), 0.0) or 0.0
+                p["p_away"] = _sf(p.get("p_away"), 0.0) or 0.0
+                p["over_25"] = _sf(p.get("over_25"), 0.0) or 0.0
+                p["btts_yes"] = _sf(p.get("btts_yes"), 0.0) or 0.0
+                tops = p.get("top_scores")
+                if isinstance(tops, str):
+                    try:
+                        import json as _json
 
-    if _cal is None or _cal.empty:
-        st.warning(
-            f"Projeções probabilísticas ({_janela_lbl}) não encontradas na base. "
-            "Execute o job semanal."
-        )
-        jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
-        df_log = pd.DataFrame()
-    else:
-        jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
-            _jogos_base,
-            _cal,
-            r_ini=r_ini_proj,
-            r_fim=r_fim_proj,
-            origem=f"prob_ml/{_janela_lbl}",
-        )
-
-    if _stand is not None and not _stand.empty:
-        _prob_sim_df = _stand.drop(columns=["Modelo", "Janela"], errors="ignore")
-    if _fc is not None and not _fc.empty:
-        from prob_ml.integration import _safe_float as _sf
-
-        pend_pairs = {(j.mand, j.vis) for j in _jogos_base if not j.jogado}
-        _prob_preds = [
-            p
-            for p in _fc.to_dict(orient="records")
-            if (
-                str(p.get("home_team") or p.get("Mandante") or ""),
-                str(p.get("away_team") or p.get("Visitante") or ""),
-            )
-            in pend_pairs
-        ]
-
-    if _prob_preds:
-        from prob_ml.integration import _safe_float as _sf
-
-        for p in _prob_preds:
-            p["xg_home"] = _sf(p.get("xg_home"), 0.0) or 0.0
-            p["xg_away"] = _sf(p.get("xg_away"), 0.0) or 0.0
-            p["p_home"] = _sf(p.get("p_home"), 0.0) or 0.0
-            p["p_draw"] = _sf(p.get("p_draw"), 0.0) or 0.0
-            p["p_away"] = _sf(p.get("p_away"), 0.0) or 0.0
-            p["over_25"] = _sf(p.get("over_25"), 0.0) or 0.0
-            p["btts_yes"] = _sf(p.get("btts_yes"), 0.0) or 0.0
-            tops = p.get("top_scores")
-            if isinstance(tops, str):
-                try:
-                    import json as _json
-
-                    p["top_scores"] = _json.loads(tops)
-                except Exception:
+                        p["top_scores"] = _json.loads(tops)
+                    except Exception:
+                        p["top_scores"] = []
+                elif not tops:
                     p["top_scores"] = []
-            elif not tops:
-                p["top_scores"] = []
 
-elif modo == "media_simples":
-    _cal_media = load_projecoes_modelos_acum(LABEL_MEDIA, _janela_lbl)
-    if _cal_media is None or _cal_media.empty:
-        st.warning(
-            f"Projeções de Média ({_janela_lbl}) não encontradas na base semanal. "
-            "Execute o job de segunda ou scripts/weekly_retrain.py."
-        )
-        jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
-        df_log = pd.DataFrame()
-    else:
-        jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+    elif modo == "media_simples":
+        _cal_media = load_projecoes_modelos_acum(LABEL_MEDIA, secao=secao_lbl)
+        if _cal_media is None or _cal_media.empty:
+            st.warning(
+                f"Projeções de {LABEL_MEDIA} ({secao_lbl}) não encontradas na base. "
+                "Execute o job semanal."
+            )
+            jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
+            df_log = pd.DataFrame()
+        else:
+            jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+                _jogos_base,
+                _cal_media,
+                r_ini=r_ini_proj,
+                r_fim=r_fim_proj,
+                origem=f"media/{secao_lbl}",
+            )
+
+    elif modo_e_regressao_acumulada(modo):
+        _cal_acum = load_projecoes_modelos_acum(modelo_lbl, secao=secao_lbl)
+        if _cal_acum is None or _cal_acum.empty:
+            st.warning(
+                f"Projeções de {modelo_lbl} ({secao_lbl}) não encontradas na base. "
+                "Execute o job semanal."
+            )
+            jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
+            df_log = pd.DataFrame()
+        else:
+            jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
+                _jogos_base,
+                _cal_acum,
+                r_ini=r_ini_proj,
+                r_fim=r_fim_proj,
+                origem=f"modelos_acum/{modelo_lbl}",
+            )
+
+    elif modo == "repetir_turno":
+        jogos_proj, df_log = aplicar_projecoes(
             _jogos_base,
-            _cal_media,
-            r_ini=r_ini_proj,
-            r_fim=r_fim_proj,
-            origem=f"media/{_janela_lbl}",
+            modo,
+            r_ini_proj,
+            r_fim_proj,
+            "mandante_visitante",
+            janela="2026",
+            ano_calendario=_ANO_CALENDARIO,
+        )
+    else:
+        jogos_proj, df_log = aplicar_projecoes(
+            _jogos_base, modo, r_ini_proj, r_fim_proj, "mandante_visitante"
         )
 
-elif modo_e_regressao_acumulada(modo):
-    _modelo_lbl = MODO_PARA_LABEL.get(modo, modo)
-    _cal_acum = load_projecoes_modelos_acum(_modelo_lbl, _janela_lbl)
-    if _cal_acum is None or _cal_acum.empty:
-        st.warning(
-            f"Projeções de {_modelo_lbl} ({_janela_lbl}) não encontradas na base semanal. "
-            "Execute o job de segunda ou scripts/weekly_retrain.py."
-        )
-        jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
-        df_log = pd.DataFrame()
-    else:
-        jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
-            _jogos_base,
-            _cal_acum,
-            r_ini=r_ini_proj,
-            r_fim=r_fim_proj,
-            origem=f"modelos_acum/{_modelo_lbl}",
-        )
-else:
-    # Média e Repetir 1º turno: só planilha de resultados / calendário
-    jogos_proj, df_log = aplicar_projecoes(
-        _jogos_base, modo, r_ini_proj, r_fim_proj, tipo
+    st.markdown("#### Classificação")
+    _df_classif = tabela_comparativa_posicoes(_jogos_base, jogos_proj)
+    if modo == "prob_ml" and _prob_sim_df is not None and not getattr(_prob_sim_df, "empty", True):
+        from prob_ml.integration import _safe_float as _sf
+
+        _mc = _prob_sim_df.copy()
+        if "Time" in _mc.columns:
+            _mc = _mc.drop_duplicates(subset=["Time"], keep="first").set_index("Time")
+        for col_src, col_dst in (
+            ("Prob. Campeão", "Prob. Campeão"),
+            ("Prob. G4", "Prob. G4"),
+            ("Prob. G6", "Prob. G6"),
+            ("Prob. Z4", "Prob. Z4"),
+            ("Pts Esperados", "Pts Projetados"),
+        ):
+            if col_src in _mc.columns and col_dst in _df_classif.columns:
+                _df_classif[col_dst] = _df_classif["Time"].map(
+                    lambda t, c=col_src: _sf(_mc.loc[t, c]) if t in _mc.index else None
+                )
+    _tabela(
+        _df_classif,
+        column_config={
+            "Posição Projetada": st.column_config.NumberColumn("Posição Projetada"),
+            "Time": st.column_config.TextColumn("Time", pinned="left"),
+            "Posição Atual": st.column_config.NumberColumn("Posição Atual"),
+            "Delta": st.column_config.NumberColumn("Delta"),
+            "Pts Projetados": st.column_config.NumberColumn(
+                "Pontuação Projetada", format="%.1f"
+            ),
+            "Prob. Campeão": st.column_config.NumberColumn(
+                "Probabilidade de ser campeão", format="%.1f%%"
+            ),
+            "Prob. G4": st.column_config.NumberColumn(
+                "Probabilidade de G4", format="%.1f%%"
+            ),
+            "Prob. G6": st.column_config.NumberColumn(
+                "Probabilidade de G6", format="%.1f%%"
+            ),
+            "Prob. Z4": st.column_config.NumberColumn(
+                "Probabilidade de Z4", format="%.1f%%"
+            ),
+        },
+        key=f"{key_prefix}_classif",
     )
 
-titulo_secao("Classificação")
-_df_classif = tabela_comparativa_posicoes(_jogos_base, jogos_proj)
-if modo == "prob_ml" and _prob_sim_df is not None and not getattr(_prob_sim_df, "empty", True):
-    from prob_ml.integration import _safe_float as _sf
+    with st.expander("Jogos projetados"):
+        if df_log.empty:
+            st.success("Todos os jogos já têm placar — nada a projetar.")
+        else:
+            _tabela(df_log, key=f"{key_prefix}_jogos_proj")
 
-    _mc = _prob_sim_df.copy()
-    if "Time" in _mc.columns:
-        _mc = _mc.drop_duplicates(subset=["Time"], keep="first").set_index("Time")
-    for col_src, col_dst in (
-        ("Prob. Campeão", "Prob. Campeão"),
-        ("Prob. G4", "Prob. G4"),
-        ("Prob. G6", "Prob. G6"),
-        ("Prob. Z4", "Prob. Z4"),
-        ("Pts Esperados", "Pts Projetados"),
-    ):
-        if col_src in _mc.columns and col_dst in _df_classif.columns:
-            _df_classif[col_dst] = _df_classif["Time"].map(
-                lambda t, c=col_src: _sf(_mc.loc[t, c]) if t in _mc.index else None
-            )
-_tabela(
-    _df_classif,
-    column_config={
-        "Posição Projetada": st.column_config.NumberColumn("Posição Projetada"),
-        "Time": st.column_config.TextColumn("Time", pinned="left"),
-        "Posição Atual": st.column_config.NumberColumn("Posição Atual"),
-        "Delta": st.column_config.NumberColumn("Delta"),
-        "Pts Projetados": st.column_config.NumberColumn(
-            "Pontuação Projetada", format="%.1f"
-        ),
-        "Prob. Campeão": st.column_config.NumberColumn(
-            "Probabilidade de ser campeão", format="%.1f%%"
-        ),
-        "Prob. G4": st.column_config.NumberColumn(
-            "Probabilidade de G4", format="%.1f%%"
-        ),
-        "Prob. G6": st.column_config.NumberColumn(
-            "Probabilidade de G6", format="%.1f%%"
-        ),
-        "Prob. Z4": st.column_config.NumberColumn(
-            "Probabilidade de Z4", format="%.1f%%"
-        ),
-    },
-    key="tbl_classif",
-)
+    if modo == "prob_ml" and _prob_preds:
+        with st.expander("Model Lab — previsões de placar", expanded=False):
+            _lab = []
+            for p in _prob_preds[:40]:
+                tops = ", ".join(
+                    f"{i}-{j} ({pr:.0%})" for i, j, pr in p["top_scores"][:3]
+                )
+                _lab.append(
+                    {
+                        "Rodada": p.get("round"),
+                        "Jogo": f"{p['home_team']} x {p['away_team']}",
+                        "λ H": round(p["xg_home"], 2),
+                        "λ A": round(p["xg_away"], 2),
+                        "P(H)": round(100 * p["p_home"], 1),
+                        "P(D)": round(100 * p["p_draw"], 1),
+                        "P(A)": round(100 * p["p_away"], 1),
+                        "O2.5": round(100 * p["over_25"], 1),
+                        "BTTS": round(100 * p["btts_yes"], 1),
+                        "Top placares": tops,
+                    }
+                )
+            _tabela(pd.DataFrame(_lab), key=f"{key_prefix}_model_lab")
+            if _prob_sim_df is not None and not getattr(_prob_sim_df, "empty", True):
+                st.caption("Simulação Monte Carlo")
+                _tabela(_prob_sim_df, key=f"{key_prefix}_mc_prob")
 
-with st.expander("Jogos projetados"):
-    if df_log.empty:
-        st.success("Todos os jogos já têm placar - nada a projetar.")
-    else:
-        _tabela(df_log, key="tbl_jogos_proj")
-
-if modo == "prob_ml" and _prob_preds:
-    with st.expander("Model Lab — previsões de placar", expanded=False):
-        st.caption(
-            "Derivado da matriz P(G_H, G_A) — aba Match_Forecasts da base semanal."
-        )
-        _lab = []
-        for p in _prob_preds[:40]:
-            tops = ", ".join(f"{i}-{j} ({pr:.0%})" for i, j, pr in p["top_scores"][:3])
-            _lab.append(
-                {
-                    "Rodada": p.get("round"),
-                    "Jogo": f"{p['home_team']} x {p['away_team']}",
-                    "λ H": round(p["xg_home"], 2),
-                    "λ A": round(p["xg_away"], 2),
-                    "P(H)": round(100 * p["p_home"], 1),
-                    "P(D)": round(100 * p["p_draw"], 1),
-                    "P(A)": round(100 * p["p_away"], 1),
-                    "O2.5": round(100 * p["over_25"], 1),
-                    "BTTS": round(100 * p["btts_yes"], 1),
-                    "Top placares": tops,
+    st.markdown("#### Evolução por rodada")
+    times_graf = st.multiselect(
+        "Times para comparar",
+        options=_times_proj,
+        default=[t for t in ("Palmeiras", "Flamengo", "Cruzeiro") if t in _times_proj],
+        key=f"{key_prefix}_times_graf",
+    )
+    if times_graf:
+        mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
+        mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
+        if modo == "prob_ml" and _prob_sim_df is not None and not _prob_sim_df.empty:
+            probs_finais = {
+                str(r["Time"]): {
+                    "campeao": float(r["Prob. Campeão"]) / 100.0,
+                    "g4": float(r["Prob. G4"]) / 100.0,
+                    "g6": float(r["Prob. G6"]) / 100.0,
+                    "z4": float(r["Prob. Z4"]) / 100.0,
                 }
-            )
-        _tabela(pd.DataFrame(_lab), key="tbl_model_lab")
-        if _prob_sim_df is not None and not getattr(_prob_sim_df, "empty", True):
-            st.caption("Simulação Monte Carlo (amostra de placares, não só W/D/L)")
-            _tabela(_prob_sim_df, key="tbl_mc_prob")
-
-titulo_secao("Evolução por rodada")
-times_graf = st.multiselect(
-    "Times para comparar",
-    options=_times_proj,
-    default=[t for t in ("Palmeiras", "Flamengo", "Cruzeiro") if t in _times_proj],
-)
-
-if times_graf:
-    mapa_atual = mapa_posicao_pontos(_jogos_base, incluir_proj=False)
-    mapa_final = mapa_posicao_pontos(jogos_proj, incluir_proj=True)
-    if modo == "prob_ml" and _prob_sim_df is not None and not _prob_sim_df.empty:
-        probs_finais = {
-            str(r["Time"]): {
-                "campeao": float(r["Prob. Campeão"]) / 100.0,
-                "g4": float(r["Prob. G4"]) / 100.0,
-                "g6": float(r["Prob. G6"]) / 100.0,
-                "z4": float(r["Prob. Z4"]) / 100.0,
+                for _, r in _prob_sim_df.iterrows()
             }
-            for _, r in _prob_sim_df.iterrows()
-        }
-    else:
-        probs_finais = probabilidades_cenarios_finais(jogos_proj)
-    times_graf_ord = sorted(
-        times_graf,
-        key=lambda t: mapa_final.get(t, (999, 0.0))[0],
-    )
-
-    for time in times_graf_ord:
-        pa, pta = mapa_atual.get(time, (0, 0))
-        pf, ptf = mapa_final.get(time, (0, 0))
-        pr = probs_finais.get(time, {})
-        bloco_classificacao_time(
-            time,
-            pa,
-            pta,
-            pf,
-            ptf,
-            prob_campeao=pr.get("campeao", 0.0),
-            prob_g4=pr.get("g4", 0.0),
-            prob_g6=pr.get("g6", 0.0),
-            prob_z4=pr.get("z4", 0.0),
+        else:
+            probs_finais = probabilidades_cenarios_finais(jogos_proj)
+        times_graf_ord = sorted(
+            times_graf,
+            key=lambda t: mapa_final.get(t, (999, 0.0))[0],
         )
+        for time in times_graf_ord:
+            pa, pta = mapa_atual.get(time, (0, 0))
+            pf, ptf = mapa_final.get(time, (0, 0))
+            pr = probs_finais.get(time, {})
+            bloco_classificacao_time(
+                time,
+                pa,
+                pta,
+                pf,
+                ptf,
+                prob_campeao=pr.get("campeao", 0.0),
+                prob_g4=pr.get("g4", 0.0),
+                prob_g6=pr.get("g6", 0.0),
+                prob_z4=pr.get("z4", 0.0),
+            )
+        evolucoes = [
+            evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r_proj)
+            for t in times_graf_ord
+        ]
+        _grafico(fig_evolucao_times(evolucoes))
+        evolucoes_pos = [
+            evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r_proj)
+            for t in times_graf_ord
+        ]
+        _grafico(fig_evolucao_posicao_times(evolucoes_pos))
+    else:
+        st.info("Selecione ao menos um time para exibir o gráfico.")
 
-    evolucoes = [
-        evolucao_pontos_time(_jogos_base, jogos_proj, t, _ult_r_proj)
-        for t in times_graf_ord
-    ]
-    _grafico(fig_evolucao_times(evolucoes))
 
-    evolucoes_pos = [
-        evolucao_posicao_time(_jogos_base, jogos_proj, t, _ult_r_proj)
-        for t in times_graf_ord
-    ]
-    _grafico(fig_evolucao_posicao_times(evolucoes_pos))
-else:
-    st.info("Selecione ao menos um time para exibir o gráfico.")
+_tabs = st.tabs([SECAO_LABEL[s] for s in SECOES_ORDEM])
+for _secao_key, _tab in zip(SECOES_ORDEM, _tabs):
+    with _tab:
+        _render_bloco_projecao(
+            _secao_key,
+            SECAO_LABEL[_secao_key],
+            key_prefix=f"sec_{_secao_key}",
+        )
 
 rodape_desenvolvedor()

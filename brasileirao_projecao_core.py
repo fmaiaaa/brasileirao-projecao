@@ -99,10 +99,30 @@ def preparar_blocos_treino_janela(
     rcfg = load_recency_settings()
     blocos: list[list[Jogo]] = []
 
-    if janela == "2025":
+    if janela == "2026":
+        cal_played = [
+            j
+            for j in jogos_calendario
+            if j.jogado and _ano_do_jogo(j) == int(ano_calendario)
+        ]
+        if cal_played:
+            blocos.append(cal_played)
+    elif janela == "2025":
         j25 = _carregar_jogos_treino_ano(2025, cal_set)
         if j25:
             blocos.append(j25)
+    elif janela == "base_completa":
+        cal_played = [j for j in jogos_calendario if j.jogado]
+        if cal_played:
+            blocos.append(cal_played)
+        if blocos_extra:
+            for bloco in blocos_extra:
+                if not bloco:
+                    continue
+                raw = remap_block_teams(bloco, cal_set) if remap_block_teams else bloco
+                played = [j for j in raw if j.jogado]
+                if played:
+                    blocos.append(played)
     elif janela == "ultimos_3_anos":
         for ano in anos_janela_tres_anos(ano_calendario, n_anos=3):
             jb = _carregar_jogos_treino_ano(ano, cal_set)
@@ -200,6 +220,21 @@ def parse_placar(placar: str) -> tuple[int, int] | None:
     if not m:
         return None
     return int(m.group(1)), int(m.group(2))
+
+
+def _ano_do_jogo(jogo: Jogo) -> int:
+    from recency import parse_match_date
+
+    d = parse_match_date(getattr(jogo, "data", "") or "")
+    return int(d.year) if d else 2026
+
+
+def _comp_serie_a_jogo(jogo: Jogo) -> float:
+    """1 = Série A, 0 = Série B (ou outra)."""
+    est = str(getattr(jogo, "est", "") or "").strip().lower()
+    if est in ("serie_b", "serie b", "b"):
+        return 0.0
+    return 1.0
 
 
 def pontos_placar(gm: int, gv: int) -> tuple[int, int]:
@@ -1396,7 +1431,7 @@ def ajustar_painel_efeitos_fixos(
     filtro_ano = _filtro_ano_regressao(variante) if janela is None else None
     effective_janela = janela
     if effective_janela is None and filtro_ano is not None:
-        effective_janela = "2025"
+        effective_janela = "2026"
 
     if effective_janela is not None:
         blocos_treino = preparar_blocos_treino_janela(
@@ -1526,7 +1561,7 @@ def ajustar_painel_efeitos_fixos(
     r_latest_w = int(max(r_l)) if r_l else int(r_fim)
     eff_janela = janela
     if eff_janela is None and filtro_ano is not None:
-        eff_janela = "2025"
+        eff_janela = "2026"
     obs_w = weights_for_panel_rounds(
         r_l,
         seasons=seasons_l,
@@ -1653,6 +1688,40 @@ def ajustar_painel_efeitos_fixos(
                 np.array([1.0 if x == lab else 0.0 for x in importante], dtype=float)
             )
             nomes.append(lab)
+
+    eff_janela_serie = effective_janela
+    if eff_janela_serie is None and filtro_ano is not None:
+        eff_janela_serie = "2026"
+    try:
+        from brasileirao_secoes import usa_features_serie_ab
+
+        usar_serie = (
+            eff_janela_serie is not None and usa_features_serie_ab(eff_janela_serie)
+        )
+    except Exception:
+        usar_serie = False
+    if usar_serie and effective_janela is not None:
+        blocos_comp = preparar_blocos_treino_janela(
+            jogos,
+            effective_janela,
+            blocos_extra=blocos_extra if not (effective_janela is not None or filtro_ano is not None) else None,
+            ano_calendario=ano_calendario,
+        )
+        blocos_flat = [j for bloco in blocos_comp for j in (bloco or [])]
+        comp_l: list[float] = []
+        for t, rv in zip(times_obs, r):
+            comp = 1.0
+            jr = jogo_do_time_na_rodada(blocos_flat, t, int(rv))
+            if jr is not None:
+                comp = _comp_serie_a_jogo(jr)
+            comp_l.append(comp)
+        comp_arr = np.array(comp_l, dtype=float)
+        cols.append(comp_arr)
+        nomes.append("comp_serie_a")
+        for t in times:
+            d = np.array([1.0 if x == t else 0.0 for x in times_obs], dtype=float)
+            cols.append(comp_arr * d)
+            nomes.append(f"Interação Série A × [{t}]")
 
     X = np.column_stack(cols)
     # Se poucas obs, remove interações e tenta de novo
@@ -2811,9 +2880,11 @@ def export_medias_para_base(
     janela_lbl: str,
     *,
     ano_calendario: int = 2026,
-    nome_modelo: str = "Média",
+    nome_modelo: str = "Modelo de médias",
 ) -> pd.DataFrame:
     """Serializa médias por time para Coefs_Modelos_Acum."""
+    from brasileirao_sheet_names import COL_SECAO
+
     df = tabela_medias_simples_times(
         jogos,
         r_ini,
@@ -2830,6 +2901,7 @@ def export_medias_para_base(
             rows.append(
                 {
                     "Modelo": nome_modelo,
+                    COL_SECAO: janela_lbl,
                     "Janela": janela_lbl,
                     "Time": row["Time"],
                     "Variável": col,

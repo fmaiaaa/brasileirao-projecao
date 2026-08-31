@@ -23,12 +23,13 @@ W_PAST_MIN = 0.0
 SERIE_A = "serie_a"
 SERIE_B = "serie_b"
 
-JanelaTreino = Literal["2025", "ultimas_38_rodadas", "ultimos_3_anos"]
+JanelaTreino = Literal["2026", "ultimas_38_rodadas", "ultimos_3_anos", "base_completa"]
 
 JANELA_TREINO_LABELS: dict[JanelaTreino, str] = {
-    "2025": "Só 2025",
+    "2026": "Só 2026",
     "ultimas_38_rodadas": "Últimas 38 rodadas",
     "ultimos_3_anos": "Últimos 3 anos",
+    "base_completa": "Base completa",
 }
 
 
@@ -171,7 +172,9 @@ def _oldest_season_for_janela(
     ano_calendario: int | None = None,
 ) -> int:
     cal = int(ano_calendario or current_season)
-    if janela == "2025":
+    if janela == "2026":
+        return int(ano_calendario or current_season)
+    if janela == "2025":  # legado
         return 2025
     if janela == "ultimos_3_anos":
         return cal - DEFAULT_TRAINING_YEARS
@@ -371,9 +374,15 @@ def filter_matches_by_janela(
     if prep.empty:
         return prep.drop(columns=[c for c in prep.columns if c.startswith("_")], errors="ignore")
 
-    if janela == "2025":
+    if janela == "2026":
+        sa_mask = (prep["_comp"] == SERIE_A) & (prep["season"] == int(ano_calendario))
+        sb_season = int(ano_calendario) - 1
+    elif janela == "2025":
         sa_mask = (prep["_comp"] == SERIE_A) & (prep["season"] == 2025)
         sb_season = 2024
+    elif janela == "base_completa":
+        sa_mask = prep["_comp"] == SERIE_A
+        sb_season = int(ano_calendario) - 1
     elif janela == "ultimos_3_anos":
         anos = anos_janela_tres_anos(int(ano_calendario), n_anos=3)
         sa_mask = (prep["_comp"] == SERIE_A) & prep["season"].isin(anos)
