@@ -8,10 +8,18 @@ import numpy as np
 import pandas as pd
 
 DEFAULT_HISTORY_ROUNDS = 38
-DEFAULT_HALF_LIFE_ROUNDS = 12.0
+DEFAULT_HALF_LIFE_ROUNDS = 12.0  # legado (prob_ml antigo)
 DEFAULT_ELASTIC_NET_ALPHA = 0.01
 DEFAULT_ELASTIC_NET_L1_RATIO = 0.5
 DEFAULT_TRAINING_YEARS = 3
+# Pesos de importância (estimativas): últimas 5 rodadas 100%→90%;
+# 6ª até 1ª rodada da temporada 90%→25%; anos passados 25%→0%.
+W_RECENT_ROUNDS = 5
+W_MAX = 1.0
+W_AFTER_RECENT = 0.90
+W_SEASON_FLOOR = 0.25
+W_PAST_MAX = 0.25
+W_PAST_MIN = 0.0
 SERIE_A = "serie_a"
 SERIE_B = "serie_b"
 
@@ -116,11 +124,128 @@ def exponential_decay_rounds(
     *,
     half_life_rounds: float = DEFAULT_HALF_LIFE_ROUNDS,
 ) -> float:
+    """Legado — preferir ``importance_weight_by_rounds_ago``."""
     if half_life_rounds <= 0:
         return 1.0
     if rounds_ago <= 0:
         return 1.0
     return float(0.5 ** (rounds_ago / half_life_rounds))
+
+
+def importance_weight_by_rounds_ago(
+    rounds_ago: float,
+    *,
+    rounds_ago_season_start: float | None = None,
+    is_past_season: bool = False,
+    past_year_fraction: float = 0.0,
+) -> float:
+    """
+    Importância estimada do jogo no treino (0–1).
+
+    Temporada atual:
+      - rodadas 0–4 (últimas 5): 100% → 90%
+      - da 6ª até a 1ª rodada: 90% → 25%
+
+    Anos passados (conforme janela):
+      - 25% → 0% (mais recente → mais antigo)
+    """
+    if is_past_season:
+        frac = min(max(float(past_year_fraction), 0.0), 1.0)
+        return max(W_PAST_MIN, W_PAST_MAX * (1.0 - frac))
+
+    ra = max(float(rounds_ago), 0.0)
+    if ra <= W_RECENT_ROUNDS - 1:
+        return W_MAX - 0.025 * ra  # 1.00, 0.975, 0.95, 0.925, 0.90
+
+    ra_first = float(rounds_ago_season_start) if rounds_ago_season_start is not None else ra
+    ra_first = max(ra_first, float(W_RECENT_ROUNDS))
+    span = max(ra_first - float(W_RECENT_ROUNDS), 1.0)
+    t = min(max(ra - float(W_RECENT_ROUNDS), 0.0) / span, 1.0)
+    return W_AFTER_RECENT - t * (W_AFTER_RECENT - W_SEASON_FLOOR)
+
+
+def _oldest_season_for_janela(
+    janela: JanelaTreino | None,
+    *,
+    current_season: int,
+    ano_calendario: int | None = None,
+) -> int:
+    cal = int(ano_calendario or current_season)
+    if janela == "2025":
+        return 2025
+    if janela == "ultimos_3_anos":
+        return cal - DEFAULT_TRAINING_YEARS
+    return current_season - 1
+
+
+def importance_weight_observation(
+    season: int,
+    round_num: int,
+    *,
+    current_season: int,
+    r_latest: int,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int | None = None,
+) -> float:
+    """Peso para uma observação (season, round) vs. calendário-alvo."""
+    season = int(season)
+    round_num = int(round_num)
+    current_season = int(current_season)
+    r_latest = int(r_latest)
+
+    if season > current_season:
+        return 0.0
+
+    if season < current_season:
+        oldest = _oldest_season_for_janela(
+            janela, current_season=current_season, ano_calendario=ano_calendario
+        )
+        if season < oldest:
+            return 0.0
+        span = max(current_season - oldest, 1)
+        past_frac = (current_season - season - 1) / span
+        past_frac = min(max(past_frac, 0.0), 1.0)
+        ra_in_season = max(38 - round_num, 0)
+        intra = 0.15 * (ra_in_season / 37.0)
+        return max(
+            W_PAST_MIN,
+            W_PAST_MAX * (1.0 - past_frac) - intra * W_PAST_MAX,
+        )
+
+    rounds_ago = max(r_latest - round_num, 0)
+    rounds_ago_first = max(r_latest - 1, W_RECENT_ROUNDS)
+    return importance_weight_by_rounds_ago(
+        rounds_ago,
+        rounds_ago_season_start=rounds_ago_first,
+        is_past_season=False,
+    )
+
+
+def weights_for_panel_observations(
+    seasons: list[int],
+    rodadas: list[float],
+    *,
+    current_season: int,
+    r_latest: int | None = None,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int | None = None,
+) -> np.ndarray:
+    if r_latest is None:
+        r_latest = int(max(rodadas)) if rodadas else 38
+    return np.array(
+        [
+            importance_weight_observation(
+                int(s),
+                int(r),
+                current_season=int(current_season),
+                r_latest=int(r_latest),
+                janela=janela,
+                ano_calendario=ano_calendario,
+            )
+            for s, r in zip(seasons, rodadas)
+        ],
+        dtype=float,
+    )
 
 
 def _played_mask(df: pd.DataFrame) -> pd.Series:
@@ -280,17 +405,34 @@ def attach_sample_weights(
     if current_season is None:
         current_season = max(k[0] for k in idx_map)
 
+    latest_key = max(idx_map, key=lambda k: idx_map[k])
+    current_season, r_latest = int(latest_key[0]), int(latest_key[1])
+
     weights = []
     for _, row in out.iterrows():
         comp = str(row["_comp"])
-        ra = _rounds_ago_from_timeline(
-            int(row["season"]),
-            int(row["round"]),
-            idx_map,
-            latest_idx,
-            competition=comp,
-        )
-        weights.append(exponential_decay_rounds(ra, half_life_rounds=half_life_rounds))
+        season = int(row["season"])
+        rnd = int(row["round"])
+        if comp == SERIE_A:
+            w = importance_weight_observation(
+                season,
+                rnd,
+                current_season=int(current_season),
+                r_latest=int(r_latest),
+                janela=None,
+                ano_calendario=int(current_season),
+            )
+        else:
+            ra = _rounds_ago_from_timeline(
+                season, rnd, idx_map, latest_idx, competition=comp
+            )
+            w = importance_weight_by_rounds_ago(
+                ra,
+                rounds_ago_season_start=float(DEFAULT_HISTORY_ROUNDS),
+                is_past_season=True,
+                past_year_fraction=0.5,
+            )
+        weights.append(w)
     out["sample_weight"] = np.asarray(weights, dtype=float)
     return out.drop(columns=[c for c in out.columns if c.startswith("_")], errors="ignore")
 
@@ -322,13 +464,27 @@ def weight_for_jogo(
     *,
     r_latest: int | None = None,
     half_life_rounds: float = DEFAULT_HALF_LIFE_ROUNDS,
+    current_season: int | None = None,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int | None = None,
 ) -> float:
+    del half_life_rounds  # legado
     if not getattr(jogo, "jogado", False):
         return 1.0
     if r_latest is None:
         r_latest = int(getattr(jogo, "r", 0))
-    rounds_ago = max(int(r_latest) - int(getattr(jogo, "r", 0)), 0)
-    return exponential_decay_rounds(rounds_ago, half_life_rounds=half_life_rounds)
+    season = current_season
+    if season is None:
+        d = parse_match_date(getattr(jogo, "data", "") or "")
+        season = d.year if d else reference_date().year
+    return importance_weight_observation(
+        int(season),
+        int(getattr(jogo, "r", 0)),
+        current_season=int(season),
+        r_latest=int(r_latest),
+        janela=janela,
+        ano_calendario=ano_calendario or season,
+    )
 
 
 def weights_for_jogos(
@@ -362,12 +518,38 @@ def weights_for_panel_rounds(
     *,
     r_latest: float | None = None,
     half_life_rounds: float = DEFAULT_HALF_LIFE_ROUNDS,
+    seasons: list[int] | None = None,
+    current_season: int | None = None,
+    janela: JanelaTreino | None = None,
+    ano_calendario: int | None = None,
 ) -> np.ndarray:
+    del half_life_rounds
+    r_list = list(rodadas)
+    if seasons is not None and len(seasons) == len(r_list):
+        cs = int(current_season or (max(seasons) if seasons else reference_date().year))
+        rl = int(r_latest) if r_latest is not None else int(max(r_list) if r_list else 38)
+        return weights_for_panel_observations(
+            [int(s) for s in seasons],
+            r_list,
+            current_season=cs,
+            r_latest=rl,
+            janela=janela,
+            ano_calendario=ano_calendario,
+        )
     r = np.asarray(rodadas, dtype=float)
     if r_latest is None:
         r_latest = float(np.nanmax(r)) if len(r) else 0.0
-    rounds_ago = np.maximum(r_latest - r, 0.0)
-    return weights_for_rounds_ago(rounds_ago, half_life_rounds=half_life_rounds)
+    ra_first = max(float(r_latest) - 1.0, float(W_RECENT_ROUNDS))
+    return np.array(
+        [
+            importance_weight_by_rounds_ago(
+                max(float(r_latest) - float(rv), 0.0),
+                rounds_ago_season_start=ra_first,
+            )
+            for rv in r
+        ],
+        dtype=float,
+    )
 
 
 def weights_for_match_dates(

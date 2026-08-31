@@ -12,7 +12,12 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from recency import JanelaTreino, load_recency_settings, weights_for_panel_rounds
+from recency import (
+    JanelaTreino,
+    load_recency_settings,
+    parse_match_date,
+    weights_for_panel_rounds,
+)
 
 TipoModeloAcumulado = Literal["kalman", "xgboost", "gam"]
 
@@ -38,6 +43,13 @@ NOME_MODELO_ACUMULADO: dict[TipoModeloAcumulado, str] = {
     "kalman": "Kalman / espaço de estados",
     "xgboost": "XGBoost",
     "gam": "GAM",
+}
+
+MODO_PARA_LABEL: dict[str, str] = {
+    "regressao_completa": "Regressão FE",
+    "kalman_acumulada": "Kalman",
+    "xgboost_acumulada": "XGBoost",
+    "gam_acumulada": "GAM",
 }
 
 
@@ -149,6 +161,7 @@ def coletar_painel_treino(
     forma_l: list[float] = []
     descanso_l: list[float] = []
     importante_l: list[str] = []
+    datas_l: list[str] = []
 
     for bloco in blocos:
         if not bloco:
@@ -156,7 +169,7 @@ def coletar_painel_treino(
         r0 = min(j.r for j in bloco)
         r1 = max(j.r for j in bloco)
         fm = mapa_forca_adversario(bloco, r0, r1)
-        t_b, r_b, y_b, p_b, f_b, fr_b, d_b, i_b, _ = _coletar_painel_efeitos_fixos(
+        t_b, r_b, y_b, p_b, f_b, fr_b, d_b, i_b, dt_b = _coletar_painel_efeitos_fixos(
             bloco, r0, r1, fm
         )
         times_obs_l.extend(t_b)
@@ -167,6 +180,7 @@ def coletar_painel_treino(
         forma_l.extend(fr_b.tolist())
         descanso_l.extend(d_b.tolist())
         importante_l.extend(i_b)
+        datas_l.extend(dt_b)
 
     times_ref = list(cal_teams)
     for t in sorted(set(times_obs_l)):
@@ -197,7 +211,17 @@ def coletar_painel_treino(
         importante_l,
         times_ref,
     )
-    w = weights_for_panel_rounds(r_l, half_life_rounds=float(rcfg["half_life_rounds"]))
+    w = weights_for_panel_rounds(
+        r_l,
+        seasons=[
+            int(parse_match_date(d).year) if parse_match_date(d) else int(ano_calendario)
+            for d in datas_l
+        ],
+        current_season=int(ano_calendario),
+        r_latest=int(max(r_l)) if r_l else 38,
+        janela=janela,
+        ano_calendario=int(ano_calendario),
+    )
     return PainelTreino(
         times=times_ref,
         times_obs=times_obs_l,
@@ -410,6 +434,101 @@ def prever_acumulado_modelo(
     X_spline = st["splines"].transform(cont[:2].reshape(1, -1))
     X_full = np.column_stack([X_spline, cont[2:].reshape(1, -1), rest.reshape(1, -1)])
     return max(float(st["ridge"].predict(X_full)[0]), 0.0)
+
+
+def coeficientes_para_base(
+    modelo: ModeloAcumuladoAjustado,
+    nome_modelo: str,
+    janela_lbl: str,
+) -> pd.DataFrame:
+    """Serializa coeficientes para a base semanal (aplicação = produto matricial)."""
+    rows: list[dict] = []
+    if modelo.tipo == "kalman" and isinstance(modelo.state, KalmanRegressor):
+        for name, val in zip(modelo.painel.feature_names, modelo.state.x):
+            rows.append(
+                {
+                    "Modelo": nome_modelo,
+                    "Janela": janela_lbl,
+                    "Time": name[3:-1] if name.startswith("FE[") else "",
+                    "Variável": name,
+                    "Beta": round(float(val), 6),
+                }
+            )
+    elif modelo.tipo == "gam" and isinstance(modelo.state, dict):
+        ridge = modelo.state.get("ridge")
+        if ridge is not None and hasattr(ridge, "coef_"):
+            names = modelo.painel.feature_names
+            n_spl = modelo.state["splines"].n_features_out_
+            for i, val in enumerate(ridge.coef_):
+                label = names[i] if i < len(names) else f"spline_{i}"
+                rows.append(
+                    {
+                        "Modelo": nome_modelo,
+                        "Janela": janela_lbl,
+                        "Time": "",
+                        "Variável": label,
+                        "Beta": round(float(val), 6),
+                    }
+                )
+    elif modelo.tipo == "xgboost" and modelo.state is not None:
+        for name, val in zip(
+            modelo.painel.feature_names, modelo.state.feature_importances_
+        ):
+            rows.append(
+                {
+                    "Modelo": nome_modelo,
+                    "Janela": janela_lbl,
+                    "Time": name[3:-1] if name.startswith("FE[") else "",
+                    "Variável": name,
+                    "Beta": round(float(val), 6),
+                    "Tipo": "importancia",
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def exportar_coefs_regressao_fe(
+    jogos: list,
+    r_ini: int,
+    r_fim: int,
+    janela: JanelaTreino,
+    *,
+    ano_calendario: int,
+    janela_lbl: str,
+    nome_modelo: str = "Regressão FE",
+) -> pd.DataFrame:
+    from brasileirao_projecao_core import (
+        ajustar_painel_efeitos_fixos,
+        coeficientes_efeitos_fixos_por_time,
+        mapa_forca_adversario,
+    )
+
+    fm = mapa_forca_adversario(jogos, r_ini, r_fim)
+    painel = ajustar_painel_efeitos_fixos(
+        jogos,
+        r_ini,
+        r_fim,
+        "completa",
+        fm,
+        janela=janela,
+        ano_calendario=ano_calendario,
+    )
+    por_time = coeficientes_efeitos_fixos_por_time(painel)
+    rows: list[dict] = []
+    for time, b in por_time.items():
+        for term in b.get("termos", []):
+            rows.append(
+                {
+                    "Modelo": nome_modelo,
+                    "Janela": janela_lbl,
+                    "Time": time,
+                    "Variável": term.get("Variável"),
+                    "Beta": term.get("Beta"),
+                    "p-valor": term.get("p-valor"),
+                    "R²": b.get("r2"),
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def tabela_resumo_modelo(modelo: ModeloAcumuladoAjustado) -> pd.DataFrame:

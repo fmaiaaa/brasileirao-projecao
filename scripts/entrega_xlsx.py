@@ -37,6 +37,7 @@ SHEET_CONTEXTO = "Base_Contexto"
 SHEET_OVERLAY = "Overlay_Calendario"
 SHEET_PROJ_MODELOS = "Projecoes_Modelos_Acum"
 SHEET_RESUMO_MODELOS = "Resumo_Modelos_Acum"
+SHEET_COEFS_MODELOS = "Coefs_Modelos_Acum"
 
 SHEETS_MODELO = (
     SHEET_LEIA_ME,
@@ -45,6 +46,7 @@ SHEETS_MODELO = (
     SHEET_CLASSIF_REG,
     SHEET_PROJ_MODELOS,
     SHEET_RESUMO_MODELOS,
+    SHEET_COEFS_MODELOS,
     SHEET_PROJ_PROB,
     SHEET_FORECASTS,
     SHEET_CLASSIF_PROB,
@@ -71,6 +73,7 @@ def build_entrega_xlsx(
     match_forecasts: pd.DataFrame | None = None,
     proj_modelos: pd.DataFrame | None = None,
     resumo_modelos: pd.DataFrame | None = None,
+    coefs_modelos: pd.DataFrame | None = None,
 ) -> Path:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -135,6 +138,7 @@ def build_entrega_xlsx(
     classif_p = classif_prob if classif_prob is not None else pd.DataFrame()
     proj_mod = proj_modelos if proj_modelos is not None else pd.DataFrame()
     res_mod = resumo_modelos if resumo_modelos is not None else pd.DataFrame()
+    coef_mod = coefs_modelos if coefs_modelos is not None else pd.DataFrame()
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as xw:
         leia.to_excel(xw, sheet_name=SHEET_LEIA_ME, index=False)
@@ -143,6 +147,7 @@ def build_entrega_xlsx(
         classif_reg.to_excel(xw, sheet_name=SHEET_CLASSIF_REG, index=False)
         proj_mod.to_excel(xw, sheet_name=SHEET_PROJ_MODELOS, index=False)
         res_mod.to_excel(xw, sheet_name=SHEET_RESUMO_MODELOS, index=False)
+        coef_mod.to_excel(xw, sheet_name=SHEET_COEFS_MODELOS, index=False)
         proj_prob.to_excel(xw, sheet_name=SHEET_PROJ_PROB, index=False)
         fc.to_excel(xw, sheet_name=SHEET_FORECASTS, index=False)
         classif_p.to_excel(xw, sheet_name=SHEET_CLASSIF_PROB, index=False)

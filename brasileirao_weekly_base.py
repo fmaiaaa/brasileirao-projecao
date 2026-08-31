@@ -31,19 +31,25 @@ try:
         MODELOS_XLSX_NAME,
         SHEET_CLASSIF_PROB,
         SHEET_CLASSIF_REG,
+        SHEET_COEFS_MODELOS,
         SHEET_COEFS_REG,
         SHEET_CONTEXTO,
         SHEET_FORECASTS,
         SHEET_LEIA_ME,
         SHEET_METRICAS,
+        SHEET_PROJ_MODELOS,
         SHEET_PROJ_PROB,
         SHEET_PROJ_REG,
+        SHEET_RESUMO_MODELOS,
     )
 except Exception:  # pragma: no cover
     MODELOS_XLSX_NAME = "brasileirao_modelos.xlsx"
     SHEET_LEIA_ME = "Leia-me"
     SHEET_PROJ_REG = "Projecoes_Regressao"
     SHEET_COEFS_REG = "Coefs_Regressao"
+    SHEET_COEFS_MODELOS = "Coefs_Modelos_Acum"
+    SHEET_PROJ_MODELOS = "Projecoes_Modelos_Acum"
+    SHEET_RESUMO_MODELOS = "Resumo_Modelos_Acum"
     SHEET_CLASSIF_REG = "Classif_Regressao"
     SHEET_PROJ_PROB = "Projecoes_Prob"
     SHEET_FORECASTS = "Match_Forecasts"
@@ -155,6 +161,46 @@ def load_regressao_coefs() -> pd.DataFrame | None:
 
         df[r2_col] = df[r2_col].map(_r2)
     return df
+
+
+def _filtrar_modelo_janela(
+    df: pd.DataFrame | None,
+    *,
+    modelo: str | None = None,
+    janela: str | None = None,
+) -> pd.DataFrame | None:
+    if df is None or df.empty:
+        return None
+    out = df.copy()
+    if modelo and "Modelo" in out.columns:
+        out = out[out["Modelo"].astype(str).str.strip() == str(modelo).strip()]
+    if janela and "Janela" in out.columns:
+        out = out[out["Janela"].astype(str).str.strip() == str(janela).strip()]
+    return out if not out.empty else None
+
+
+def load_projecoes_modelos_acum(
+    modelo: str | None = None,
+    janela: str | None = None,
+) -> pd.DataFrame | None:
+    """Projeções pré-calculadas (FE / Kalman / XGBoost / GAM × janela)."""
+    return _filtrar_modelo_janela(load_sheet(SHEET_PROJ_MODELOS), modelo=modelo, janela=janela)
+
+
+def load_coefs_modelos_acum(
+    modelo: str | None = None,
+    janela: str | None = None,
+) -> pd.DataFrame | None:
+    """Coeficientes serializados na base — app só exibe, não reestima."""
+    return _filtrar_modelo_janela(load_sheet(SHEET_COEFS_MODELOS), modelo=modelo, janela=janela)
+
+
+def load_resumo_modelos_acum(
+    modelo: str | None = None,
+    janela: str | None = None,
+) -> pd.DataFrame | None:
+    """R² e N observações por modelo/janela."""
+    return _filtrar_modelo_janela(load_sheet(SHEET_RESUMO_MODELOS), modelo=modelo, janela=janela)
 
 
 def load_prob_projecoes() -> pd.DataFrame | None:

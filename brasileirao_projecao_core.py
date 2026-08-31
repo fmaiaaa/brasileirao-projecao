@@ -77,10 +77,9 @@ def _filtro_ano_regressao(variante: VarianteRegressaoAcumulada) -> int | None:
 def regressao_usa_base_semanal(
     modo: ModoProjecao, janela: JanelaTreino | None = None
 ) -> bool:
-    """Só regressão completa + 38 rodadas usa o XLSX semanal pré-calculado."""
-    return modo == "regressao_completa" and (
-        janela is None or janela == "ultimas_38_rodadas"
-    )
+    """Projeções e coeficientes dos modelos acumulados vêm da base semanal."""
+    del janela
+    return modo_e_regressao_acumulada(modo)
 
 
 def preparar_blocos_treino_janela(
@@ -1490,8 +1489,23 @@ def ajustar_painel_efeitos_fixos(
     forma = np.array(forma_l, dtype=float)
     descanso = np.array(descanso_l, dtype=float)
     importante = importante_l
+    from recency import parse_match_date
+
+    seasons_l = []
+    for d in datas_l:
+        dt = parse_match_date(d)
+        seasons_l.append(int(dt.year) if dt else int(ano_calendario))
+    r_latest_w = int(max(r_l)) if r_l else int(r_fim)
+    eff_janela = janela
+    if eff_janela is None and filtro_ano is not None:
+        eff_janela = "2025"
     obs_w = weights_for_panel_rounds(
-        r_l, half_life_rounds=float(rcfg["half_life_rounds"])
+        r_l,
+        seasons=seasons_l,
+        current_season=int(ano_calendario),
+        r_latest=r_latest_w,
+        janela=eff_janela,
+        ano_calendario=int(ano_calendario),
     )
 
     # FE: times do calendário + quaisquer times extras que apareceram no painel

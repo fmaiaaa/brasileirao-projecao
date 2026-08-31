@@ -11,12 +11,15 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from recency import (
+    W_MAX,
+    W_SEASON_FLOOR,
     attach_sample_weights,
     detect_promoted_teams,
     elastic_net_lstsq,
     exponential_decay_rounds,
     filter_jogos_by_round_window,
     filter_matches_dataframe,
+    importance_weight_by_rounds_ago,
     load_regression_settings,
     weight_for_jogo,
     weighted_mean,
@@ -38,12 +41,27 @@ def _serie_a_row(season: int, round_num: int, home: str, away: str) -> dict:
     }
 
 
-def test_exponential_decay_old_rounds_much_lighter():
+def test_importance_weight_scheme():
+    """Últimas 5 rodadas 100→90%; depois 90→25%; anos passados 25→0%."""
+    w0 = importance_weight_by_rounds_ago(0)
+    w4 = importance_weight_by_rounds_ago(4)
+    w5 = importance_weight_by_rounds_ago(5, rounds_ago_season_start=37)
+    w_old = importance_weight_by_rounds_ago(37, rounds_ago_season_start=37)
+    w_past = importance_weight_by_rounds_ago(0, is_past_season=True, past_year_fraction=0.0)
+    w_past_old = importance_weight_by_rounds_ago(0, is_past_season=True, past_year_fraction=1.0)
+    assert w0 == W_MAX
+    assert 0.89 <= w4 <= 0.91
+    assert 0.88 <= w5 <= 0.92
+    assert abs(w_old - W_SEASON_FLOOR) < 0.02
+    assert abs(w_past - 0.25) < 0.02
+    assert w_past_old == 0.0
+    assert w0 > w_old > w_past_old
+
+
+def test_exponential_decay_legacy():
     w_recent = exponential_decay_rounds(1, half_life_rounds=12)
     w_old = exponential_decay_rounds(37, half_life_rounds=12)
-    assert w_recent > 0.9
-    assert w_old < 0.15
-    assert w_recent > 5 * w_old
+    assert w_recent > w_old
 
 
 def test_filter_matches_last_38_rounds():
@@ -101,7 +119,8 @@ def test_media_pts_jogo_weighted_by_round():
     assert m["geral"] > 3.0 / 38
     w_new = weight_for_jogo(Jogo(50, "", "", "A", "C", "3 x 0"), r_latest=50)
     w_old = weight_for_jogo(Jogo(13, "", "", "A", "B", "0 x 3"), r_latest=50)
-    assert w_new > 5 * w_old
+    assert w_new > w_old
+    assert w_new >= 0.99
 
 
 def test_filter_jogos_by_round_window():
@@ -118,6 +137,8 @@ def test_attach_sample_weights_by_round():
     assert "sample_weight" in out.columns
     w38 = out.loc[out["round"] == 38, "sample_weight"].iloc[0]
     w1 = out.loc[out["round"] == 1, "sample_weight"].iloc[0]
+    assert w38 >= 0.99
+    assert w1 <= 0.30
     assert w38 > w1
 
 

@@ -41,6 +41,7 @@ from entrega_xlsx import (  # noqa: E402
     MODELOS_XLSX_NAME,
     SHEET_CLASSIF_PROB,
     SHEET_CLASSIF_REG,
+    SHEET_COEFS_MODELOS,
     SHEET_COEFS_REG,
     SHEET_CONTEXTO,
     SHEET_FORECASTS,
@@ -90,17 +91,20 @@ def _gerar_modelos_acumulados(
     r_fim: int,
     *,
     ano_calendario: int,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Projeções e resumo para FE/Kalman/XGBoost/GAM × 3 janelas de treino."""
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Projeções, resumo e coeficientes para FE/Kalman/XGBoost/GAM × 3 janelas."""
     from recency import JANELA_TREINO_LABELS, JanelaTreino
     from modelos_acumulados import (
         ajustar_modelo_acumulado,
+        coeficientes_para_base,
         coletar_painel_treino,
+        exportar_coefs_regressao_fe,
         tabela_resumo_modelo,
     )
 
     proj_rows: list[dict] = []
     resumo_rows: list[dict] = []
+    coef_parts: list[pd.DataFrame] = []
 
     for janela in MODELOS_ACUM_JANELAS:
         janela_t: JanelaTreino = janela  # type: ignore[assignment]
@@ -129,6 +133,16 @@ def _gerar_modelos_acumulados(
                         }
                     )
                 if modo == "regressao_completa":
+                    coef_df = exportar_coefs_regressao_fe(
+                        jogos,
+                        r_ini,
+                        r_fim,
+                        janela_t,
+                        ano_calendario=ano_calendario,
+                        janela_lbl=janela_lbl,
+                    )
+                    if coef_df is not None and not coef_df.empty:
+                        coef_parts.append(coef_df)
                     coefs = tabela_regressao_acumulada_resumo(
                         jogos,
                         r_ini,
@@ -154,6 +168,9 @@ def _gerar_modelos_acumulados(
                         jogos, janela_t, ano_calendario=ano_calendario
                     )
                     modelo = ajustar_modelo_acumulado(painel, tipo, janela_t)  # type: ignore[arg-type]
+                    cbase = coeficientes_para_base(modelo, nome, janela_lbl)
+                    if cbase is not None and not cbase.empty:
+                        coef_parts.append(cbase)
                     resumo = tabela_resumo_modelo(modelo)
                     n_obs = resumo.loc[resumo["Campo"] == "N observações", "Valor"]
                     r2 = resumo.loc[resumo["Campo"] == "R²", "Valor"]
@@ -177,7 +194,10 @@ def _gerar_modelos_acumulados(
                     }
                 )
 
-    return pd.DataFrame(proj_rows), pd.DataFrame(resumo_rows)
+    coefs_all = (
+        pd.concat(coef_parts, ignore_index=True) if coef_parts else pd.DataFrame()
+    )
+    return pd.DataFrame(proj_rows), pd.DataFrame(resumo_rows), coefs_all
 
 
 def _seasons_for_download(cfg) -> list[int]:
@@ -361,13 +381,14 @@ def main() -> int:
     )
     logger.info("Regressão (38 rod.): %s projeções calculadas", len(log_reg))
 
-    proj_modelos, resumo_modelos = _gerar_modelos_acumulados(
+    proj_modelos, resumo_modelos, coefs_modelos = _gerar_modelos_acumulados(
         jogos, r_ini, r_fim, ano_calendario=ano_cal
     )
     logger.info(
-        "Modelos acumulados: %s linhas de projeção, %s resumos",
+        "Modelos acumulados: %s projeções, %s resumos, %s coeficientes",
         len(proj_modelos),
         len(resumo_modelos),
+        len(coefs_modelos),
     )
 
     classif_prob = standings if standings is not None else classificacao(jogos_reg)
@@ -476,6 +497,7 @@ def main() -> int:
         match_forecasts=fc_df,
         proj_modelos=proj_modelos,
         resumo_modelos=resumo_modelos,
+        coefs_modelos=coefs_modelos,
         meta=meta,
     )
     for dest in destinos[1:]:
@@ -516,6 +538,7 @@ def main() -> int:
                     SHEET_CLASSIF_REG: classif_reg,
                     SHEET_PROJ_MODELOS: proj_modelos,
                     SHEET_RESUMO_MODELOS: resumo_modelos,
+                    SHEET_COEFS_MODELOS: coefs_modelos,
                     SHEET_PROJ_PROB: cal_prob,
                     SHEET_FORECASTS: fc_df if fc_df is not None else pd.DataFrame(),
                     SHEET_CLASSIF_PROB: classif_prob,

@@ -17,12 +17,10 @@ from brasileirao_estilo import (
     titulo_secao,
 )
 from brasileirao_projecao_core import (
+    Jogo,
     ModoProjecao,
     TipoRegressao,
-    VarianteRegressaoAcumulada,
     modo_e_regressao_acumulada,
-    modo_e_modelo_acumulado,
-    regressao_usa_base_semanal,
     aplicar_projecoes,
     carregar_jogos,
     colunas_estatisticas_grafico,
@@ -44,7 +42,6 @@ from brasileirao_projecao_core import (
     tabela_jogos_primeiro_turno,
     tabela_comparativa_posicoes,
     tabela_estatisticas_times,
-    tabela_regressao_acumulada_resumo,
     times_do_calendario,
 )
 from brasileirao_weekly_base import (
@@ -52,21 +49,17 @@ from brasileirao_weekly_base import (
     aplicar_projecoes_csv_com_gap,
     enriquecer_stats_com_contexto,
     jogos_serie_a_ano,
+    load_coefs_modelos_acum,
     load_prob_forecasts,
     load_prob_metricas,
     load_prob_projecoes,
     load_prob_standings,
-    load_regressao_calendar,
-    load_regressao_coefs,
+    load_projecoes_modelos_acum,
+    load_resumo_modelos_acum,
     modelos_ready,
-    regressao_ready,
 )
 from recency import JANELA_TREINO_LABELS, JanelaTreino
-from modelos_acumulados import (
-    ajustar_modelo_acumulado,
-    coletar_painel_treino,
-    tabela_resumo_modelo,
-)
+from modelos_acumulados import MODO_PARA_LABEL
 
 _PLOTLY_CONFIG = {
     "displaylogo": False,
@@ -434,7 +427,6 @@ modo_label = st.radio("Modo de projeção", options=_modo_opcoes, index=0)
 
 modo: ModoProjecao
 tipo: TipoRegressao = "mandante_visitante"
-variante_acum: VarianteRegressaoAcumulada = "completa"
 janela_treino: JanelaTreino = "ultimas_38_rodadas"
 _prob_bundle = None
 _prob_preds: list = []
@@ -463,7 +455,6 @@ if modo_label.startswith("Pontos acumulados"):
     )
     if _sub_modelo.startswith("Regressão"):
         modo = "regressao_completa"
-        variante_acum = "completa"
     elif _sub_modelo.startswith("Kalman"):
         modo = "kalman_acumulada"
     elif _sub_modelo.startswith("XGBoost"):
@@ -480,41 +471,24 @@ else:
     modo = "repetir_turno"
 
 with st.expander("Detalhes do modelo"):
-    if modo_e_modelo_acumulado(modo):
+    if modo_e_regressao_acumulada(modo):
+        _modelo_lbl = MODO_PARA_LABEL.get(modo, modo)
+        _janela_lbl = JANELA_TREINO_LABELS[janela_treino]
         st.caption(
-            f"Estimado ao vivo — janela: {JANELA_TREINO_LABELS[janela_treino]}. "
-            "Variáveis: Rodada, Rodada², Forma, FAP, Indicador casa, Descanso, copas + efeito do time."
+            f"Coeficientes e projeções da base semanal (job de segunda 03:00). "
+            f"Modelo: {_modelo_lbl} · Janela: {_janela_lbl}. "
+            "Pesos de importância: últimas 5 rodadas 100→90%; "
+            "6ª até 1ª rodada 90→25%; anos passados 25→0% (conforme janela)."
         )
-        _tipo = modo.replace("_acumulada", "")
-        _painel = coletar_painel_treino(
-            _jogos_base, janela_treino, ano_calendario=int(_ANO_CALENDARIO)
-        )
-        _modelo = ajustar_modelo_acumulado(_painel, _tipo, janela_treino)  # type: ignore[arg-type]
-        _tabela(tabela_resumo_modelo(_modelo), key="tbl_modelo_alt")
-    elif modo == "regressao_completa":
-        if regressao_usa_base_semanal(modo, janela_treino):
+        _resumo = load_resumo_modelos_acum(_modelo_lbl, _janela_lbl)
+        if _resumo is not None and not _resumo.empty:
             st.caption(
-                "Coeficientes da base semanal (job de segunda 03:00). "
-                "Janela: últimas 38 rodadas + multi-liga. "
-                "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
+                f"R² = {_resumo.iloc[0].get('R²', '—')} · "
+                f"N obs = {_resumo.iloc[0].get('N observações', '—')}"
             )
-            _coefs = load_regressao_coefs()
-        else:
-            st.caption(
-                f"Coeficientes estimados ao vivo — janela: {JANELA_TREINO_LABELS[janela_treino]}. "
-                "Significância: *** p<0,001 | ** p<0,01 | * p<0,05 | - não significativo"
-            )
-            _coefs = tabela_regressao_acumulada_resumo(
-                _jogos_base,
-                r_ini_proj,
-                r_fim_proj,
-                variante_acum,
-                janela=janela_treino,
-                ano_calendario=int(_ANO_CALENDARIO),
-            )
+        _coefs = load_coefs_modelos_acum(_modelo_lbl, _janela_lbl)
         if _coefs is not None and not _coefs.empty:
             _coefs_show = _coefs.copy()
-            # garante rótulo legível (0.8888), nunca 8888 / 8.888
             for _c in list(_coefs_show.columns):
                 if str(_c).strip().lower().replace("²", "2") in {"r2", "r²"}:
                     def _fmt_r2_ui(v):
@@ -537,9 +511,15 @@ with st.expander("Detalhes do modelo"):
                 _coefs_show,
                 column_config={
                     "Time": st.column_config.TextColumn("Time", pinned="left"),
-                    "R²": st.column_config.TextColumn("R²", width="small"),
+                    "Variável": st.column_config.TextColumn("Variável"),
+                    "Beta": st.column_config.NumberColumn("Beta", format="%.4f"),
                 },
                 key="tbl_reg",
+            )
+        else:
+            st.info(
+                "Coeficientes ainda não disponíveis na base. "
+                "Aguarde o job semanal ou execute scripts/weekly_retrain.py."
             )
     elif modo == "media_simples":
         st.caption(
@@ -626,23 +606,23 @@ if modo == "prob_ml":
                 p["top_scores"] = []
 
 elif modo_e_regressao_acumulada(modo):
-    if regressao_usa_base_semanal(modo, janela_treino):
+    _modelo_lbl = MODO_PARA_LABEL.get(modo, modo)
+    _janela_lbl = JANELA_TREINO_LABELS[janela_treino]
+    _cal_acum = load_projecoes_modelos_acum(_modelo_lbl, _janela_lbl)
+    if _cal_acum is None or _cal_acum.empty:
+        st.warning(
+            f"Projeções de {_modelo_lbl} ({_janela_lbl}) não encontradas na base semanal. "
+            "Execute o job de segunda ou scripts/weekly_retrain.py."
+        )
+        jogos_proj = [Jogo(**j.__dict__) for j in _jogos_base]
+        df_log = pd.DataFrame()
+    else:
         jogos_proj, df_log = aplicar_projecoes_csv_com_gap(
             _jogos_base,
-            load_regressao_calendar() if regressao_ready() else None,
+            _cal_acum,
             r_ini=r_ini_proj,
             r_fim=r_fim_proj,
-            origem="regressao/xlsx",
-        )
-    else:
-        jogos_proj, df_log = aplicar_projecoes(
-            _jogos_base,
-            modo,
-            r_ini_proj,
-            r_fim_proj,
-            tipo,
-            janela=janela_treino,
-            ano_calendario=int(_ANO_CALENDARIO),
+            origem=f"modelos_acum/{_modelo_lbl}",
         )
 else:
     # Média e Repetir 1º turno: só planilha de resultados / calendário
