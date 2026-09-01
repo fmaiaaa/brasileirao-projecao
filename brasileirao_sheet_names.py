@@ -22,6 +22,9 @@ SHEET_OVERLAY = "Overlay_Calendario"
 COL_SECAO = "Seção"
 COL_JANELA = "Janela"
 
+# Re-export legado (antes em scripts/entrega_xlsx; labels canônicos em brasileirao_secoes)
+from brasileirao_secoes import LABEL_MEDIA, LABEL_PROB  # noqa: E402
+
 SHEETS_MODELO = (
     SHEET_LEIA_ME,
     SHEET_PROJ_REG,

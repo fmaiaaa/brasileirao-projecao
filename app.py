@@ -18,8 +18,6 @@ from brasileirao_estilo import (
 )
 from brasileirao_projecao_core import (
     Jogo,
-    ModoProjecao,
-    TipoRegressao,
     modo_e_regressao_acumulada,
     aplicar_projecoes,
     carregar_jogos,
@@ -39,7 +37,6 @@ from brasileirao_projecao_core import (
     mapa_posicao_pontos,
     probabilidades_cenarios_finais,
     tabela_jogos_primeiro_turno,
-    tabela_comparativa_posicoes,
     tabela_estatisticas_times,
     times_do_calendario,
 )
@@ -51,15 +48,13 @@ from brasileirao_weekly_base import (
     load_classif_modelos_acum,
     load_coefs_modelos_acum,
     load_forecasts_modelos_acum,
-    load_prob_metricas,
     load_projecoes_modelos_acum,
     load_resumo_modelos_acum,
 )
-from recency import JANELA_TREINO_LABELS, JanelaTreino
+from recency import JanelaTreino
 from brasileirao_secoes import (
     LABEL_MEDIA,
     LABEL_PROB,
-    LABEL_TURNO,
     MODELOS_SECAO_PADRAO,
     PRAZO_CURTO,
     PRAZO_PIPE_LEGENDA,
